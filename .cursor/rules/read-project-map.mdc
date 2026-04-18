@@ -1,0 +1,21 @@
+---
+description: Read PROJECT_MAP.md before making any changes to this project
+alwaysApply: true
+---
+
+# Start Here
+
+Before making any changes or answering questions about this codebase, read `PROJECT_MAP.md` in the project root.
+
+It contains:
+- What the app does and why
+- Every file's purpose and the functions inside it
+- Data flow from CSV load to export
+- Known incomplete features
+- How to run the project locally
+
+Do not skip this step.
+
+## Updating the Map
+After any major change (new file, new struct, refactor, new convention),
+update PROJECT_MAP.md before closing the task.

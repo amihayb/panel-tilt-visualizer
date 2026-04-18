@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel Tilt — Robot Telemetry</title>
+
+  <!-- Apply theme before first paint to avoid flash -->
+  <script>
+    (function () {
+      var t = localStorage.getItem('pt-theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="vendor/font-awesome.min.css" rel="stylesheet">
+  <link href="css/style.css" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+
+  <!-- ─── Top navigation ─────────────────────────────────────────────────── -->
+  <div class="topnav" id="topnav">
+    <img src="images/nextpower-logo-white.svg" alt="NextPower logo" class="topnav-brand-logo logo-dark-theme">
+    <img src="images/nextpower-logo-black.svg" alt="NextPower logo" class="topnav-brand-logo logo-light-theme">
+
+    <span class="topnav-fileopen" title="Load telemetry CSV">
+      <i class="fa fa-folder-open"></i>
+      <input id="file-input" type="file" accept=".csv,.txt">
+    </span>
+
+    <a id="export-btn" class="topnav-action disabled" title="Export full telemetry CSV with X and panel columns">
+      <i class="fa fa-save"></i>
+    </a>
+
+    <a id="export-panel-btn" class="topnav-action disabled" title="Export panel stats CSV (mean pitch per panel)">
+      <i class="fa fa-table"></i>
+    </a>
+
+    <span class="topnav-apptitle">Panels Tilt Visualizer</span>
+    <span class="topnav-spacer"></span>
+
+    <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" title="Toggle light / dark theme">
+      <i class="fa fa-moon-o" id="theme-icon"></i>
+    </button>
+
+    <img src="images/logo-title.svg" alt="Nextscope logo" class="headImg">
+  </div>
+
+  <!-- ─── Stats bar ──────────────────────────────────────────────────────── -->
+  <div class="stats-bar" id="stats-bar" style="display:none">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-rows">—</div>
+      <div class="stat-label">Rows</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="stat-distance">—</div>
+      <div class="stat-label">Total Distance (m)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="stat-timespan">—</div>
+      <div class="stat-label">Time Span (s)</div>
+    </div>
+    <div class="stat-card stat-card--bias">
+      <div class="stat-value stat-value--bias">
+        <input type="number" id="bias-pitch-input" step="0.01" min="-90" max="90"
+          title="Subtract from raw pitch before gaps &amp; plots">
+      </div>
+      <label class="stat-label" for="bias-pitch-input">Bias pitch (deg)</label>
+    </div>
+  </div>
+
+  <!-- ─── Drop zone (shown before file loaded) ───────────────────────────── -->
+  <div class="drop-zone" id="drop-zone">
+    <div class="drop-indicator">
+      <div class="drop-icon"><i class="fa fa-arrow-down"></i></div>
+      <div class="drop-text">Drop a telemetry CSV here<br>or click <strong><i class="fa fa-folder-open"></i> Load</strong> in the toolbar</div>
+    </div>
+  </div>
+
+  <!-- ─── Plot area ─────────────────────────────────────────────────────── -->
+  <div class="plot-area" id="plot-area" style="display:none">
+    <div id="plot-panel-tilt-lines"></div>
+    <div id="plot-panel-pitch"></div>
+    <div id="plot-pitch"></div>
+  </div>
+
+  <!-- ─── Scripts ────────────────────────────────────────────────────────── -->
+  <script src="js/config.js"></script>
+  <script src="js/parser.js"></script>
+  <script src="js/exporter.js"></script>
+  <script src="js/plots.js"></script>
+  <script>
+    (async () => {
+      await loadConfig();
+
+      const fileInput  = document.getElementById('file-input');
+      const exportBtn       = document.getElementById('export-btn');
+      const exportPanelBtn  = document.getElementById('export-panel-btn');
+      const dropZone        = document.getElementById('drop-zone');
+      const statsBar   = document.getElementById('stats-bar');
+      const plotArea   = document.getElementById('plot-area');
+      const themeBtn   = document.getElementById('theme-toggle');
+      const themeIcon  = document.getElementById('theme-icon');
+
+      let loadedRows, loadedHeaders, loadedPanelStats;
+      let loadedSeg0, loadedSeg180;
+
+      const biasPitchInput = document.getElementById('bias-pitch-input');
+
+      // ── File handling ───────────────────────────────────────────────────
+      function handleFile(file) {
+        const reader = new FileReader();
+        reader.addEventListener('load', (e) => {
+          const text = e.target.result || '';
+          const { headers, rows } = parseCSV(text);
+
+          if (!rows.length) {
+            alert('No data rows found in the file.');
+            return;
+          }
+
+          const { seg0, seg180 } = detectDriveSegments(rows);
+          const allQualSegs = [...seg0, ...seg180];
+
+          computeOdometry(rows, allQualSegs);
+          assignPanelNumbers(rows, seg0, seg180);
+
+          loadedPanelStats = computePanelStats(rows);
+          loadedRows       = rows;
+          loadedHeaders    = headers;
+          loadedSeg0       = seg0;
+          loadedSeg180     = seg180;
+
+          biasPitchInput.value = String(CFG.biasPitch);
+
+          // Show UI before rendering so Plotly measures real widths
+          dropZone.style.display  = 'none';
+          statsBar.style.display  = 'flex';
+          plotArea.style.display  = 'block';
+
+          updateStatsBar(rows);
+          renderPanelMeanPitchPlot(loadedPanelStats);
+          renderPanelTiltLinesPlot(loadedPanelStats);
+          renderPitchPlot(rows);
+
+          exportBtn.classList.remove('disabled');
+          exportPanelBtn.classList.remove('disabled');
+        });
+        reader.readAsText(file);
+      }
+
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files[0]) handleFile(e.target.files[0]);
+        e.target.value = '';
+      });
+
+      exportBtn.addEventListener('click', () => {
+        if (loadedRows) exportCSV(loadedRows, loadedHeaders);
+      });
+
+      exportPanelBtn.addEventListener('click', () => {
+        if (loadedPanelStats) exportPanelStatsCSV(loadedPanelStats);
+      });
+
+      // ── Bias pitch (live): replot + re-run panel detection ───────────────
+      function parseBiasInput(str) {
+        const t = String(str).trim().replace(',', '.');
+        if (
+          t === '' ||
+          t === '-' ||
+          t === '+' ||
+          t === '.' ||
+          t === '-.' ||
+          t === '+.'
+        )
+          return NaN;
+        const v = parseFloat(t);
+        return Number.isFinite(v) ? v : NaN;
+      }
+
+      function applyBiasAndRefreshPlots() {
+        if (!loadedRows) return false;
+        const v = parseBiasInput(biasPitchInput.value);
+        if (!Number.isFinite(v)) return false;
+        CFG.biasPitch = v;
+        reapplyPitchBias(loadedRows);
+        assignPanelNumbers(loadedRows, loadedSeg0 || [], loadedSeg180 || []);
+        loadedPanelStats = computePanelStats(loadedRows);
+        renderPanelMeanPitchPlot(loadedPanelStats);
+        renderPanelTiltLinesPlot(loadedPanelStats);
+        renderPitchPlot(loadedRows);
+        return true;
+      }
+
+      biasPitchInput.addEventListener('input', () => {
+        applyBiasAndRefreshPlots();
+      });
+
+      biasPitchInput.addEventListener('change', () => {
+        applyBiasAndRefreshPlots();
+      });
+
+      biasPitchInput.addEventListener('blur', () => {
+        if (!loadedRows) return;
+        if (!applyBiasAndRefreshPlots())
+          biasPitchInput.value = String(CFG.biasPitch);
+      });
+
+      // ── Click on drop zone opens file picker ────────────────────────────
+      dropZone.addEventListener('click', () => fileInput.click());
+
+      // ── Drag and drop ───────────────────────────────────────────────────
+      document.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-active');
+      });
+      document.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-active');
+      });
+      document.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-active');
+        const file = e.dataTransfer && e.dataTransfer.files[0];
+        if (file) handleFile(file);
+      });
+
+      // ── Theme toggle ────────────────────────────────────────────────────
+      function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('pt-theme', theme);
+        themeIcon.className = theme === 'dark' ? 'fa fa-moon-o' : 'fa fa-sun-o';
+        // Re-render plots so Plotly picks up the new CSS color variables
+        if (loadedPanelStats) {
+          renderPanelMeanPitchPlot(loadedPanelStats);
+          renderPanelTiltLinesPlot(loadedPanelStats);
+        }
+        if (loadedRows) renderPitchPlot(loadedRows);
+      }
+
+      themeBtn.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme') || 'dark';
+        applyTheme(current === 'dark' ? 'light' : 'dark');
+      });
+
+      applyTheme(localStorage.getItem('pt-theme') || 'dark');
+    })();
+  </script>
+</body>
+</html>
