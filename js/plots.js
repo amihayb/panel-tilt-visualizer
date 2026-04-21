@@ -168,6 +168,11 @@ function _displayedMeanPitch(s) {
   return s.dir === 180 ? -s.meanPitch : s.meanPitch;
 }
 
+// Mean displayed roll — same sign-flip convention as pitch
+function _displayedMeanRoll(s) {
+  return s.dir === 180 ? -s.meanRoll : s.meanRoll;
+}
+
 function _formatPitchLabel(p) {
   const v = Math.round(p * 100) / 100;
   if (Math.abs(v) < 1e-8) return '0';
@@ -422,4 +427,311 @@ function renderPitchPlot(rows) {
   };
 
   Plotly.react('plot-pitch', traces, layout, _cfg);
+}
+
+// ─── Mean Roll vs Panel Number ─────────────────────────────────────────────
+
+function renderPanelMeanRollPlot(panelStats) {
+  const c = _themeColors();
+  const traces = [];
+
+  const pass0   = panelStats.filter(s => s.dir === 0);
+  const pass180 = panelStats.filter(s => s.dir === 180);
+
+  if (pass0.length) {
+    traces.push({
+      x:    pass0.map(s => s.panel_no),
+      y:    pass0.map(s => s.meanRoll),
+      text: pass0.map(s =>
+        `Panel ${s.panel_no}<br>` +
+        `Centre X: ${s.centerX.toFixed(2)} m<br>` +
+        `Rows in window: ${s.windowRowCount}`
+      ),
+      type: 'scatter',
+      mode: 'markers',
+      name: '0° pass',
+      marker: { color: '#3A8FC4', size: 9, symbol: 'circle' },
+      hovertemplate:
+        '<b>%{text}</b><br>' +
+        'Mean roll: %{y:.3f}°<extra></extra>'
+    });
+  }
+
+  if (pass180.length) {
+    traces.push({
+      x:    pass180.map(s => s.panel_no),
+      y:    pass180.map(s => -s.meanRoll),
+      text: pass180.map(s =>
+        `Panel ${s.panel_no}<br>` +
+        `Centre X: ${s.centerX.toFixed(2)} m<br>` +
+        `Rows in window: ${s.windowRowCount}`
+      ),
+      type: 'scatter',
+      mode: 'markers',
+      name: '180° pass',
+      marker: { color: '#D4523A', size: 9, symbol: 'diamond' },
+      hovertemplate:
+        '<b>%{text}</b><br>' +
+        'Plot roll (−mean): %{y:.3f}°<extra></extra>'
+    });
+  }
+
+  const layout = {
+    paper_bgcolor: c.paper,
+    plot_bgcolor:  c.plot,
+    font: { family: 'Lato, sans-serif', color: c.text, size: 13 },
+    margin: { t: 20, r: 20, b: 60, l: 70 },
+    xaxis: {
+      title: { text: 'Panel number', font: { color: c.muted, size: 12 } },
+      gridcolor: c.grid,
+      zerolinecolor: c.grid,
+      color: c.muted,
+      dtick: 1,
+      tickmode: 'linear'
+    },
+    yaxis: {
+      title: { text: 'Displayed roll (deg)', font: { color: c.muted, size: 12 } },
+      gridcolor: c.grid,
+      zerolinecolor: c.grid,
+      color: c.muted,
+      zeroline: true,
+      zerolinewidth: 1
+    },
+    legend: {
+      font: { color: c.muted, size: 11 },
+      bgcolor: 'transparent',
+      orientation: 'h',
+      x: 0,
+      xanchor: 'left',
+      y: -0.18,
+      yanchor: 'top'
+    },
+    hovermode: 'closest',
+    showlegend: true
+  };
+
+  _applyPanelNumberXAxis(layout, panelStats);
+
+  Plotly.react('plot-panel-roll', traces, layout, _cfg);
+}
+
+// ─── Panel roll tilt lines (connected chain per direction) ─────────────────
+
+function renderPanelRollLinesPlot(panelStats) {
+  const c = _themeColors();
+
+  const chain0   = _buildTiltChainRoll(panelStats, 0,   COLOR_0);
+  const chain180 = _buildTiltChainRoll(panelStats, 180, COLOR_180);
+
+  const traces = [];
+
+  if (chain0.x.length) {
+    traces.push({
+      x: chain0.x,
+      y: chain0.y,
+      type: 'scatter',
+      mode: 'lines',
+      name: '0° pass',
+      line: { color: COLOR_0, width: 3 },
+      hoverinfo: 'skip'
+    });
+  }
+
+  if (chain180.x.length) {
+    traces.push({
+      x: chain180.x,
+      y: chain180.y,
+      type: 'scatter',
+      mode: 'lines',
+      name: '180° pass',
+      line: { color: COLOR_180, width: 3 },
+      hoverinfo: 'skip'
+    });
+  }
+
+  if (!traces.length) {
+    traces.push({ x: [], y: [], type: 'scatter', mode: 'lines', showlegend: false });
+  }
+
+  const annotations = [...chain0.annotations, ...chain180.annotations];
+
+  const layout = {
+    paper_bgcolor: c.paper,
+    plot_bgcolor: c.plot,
+    font: { family: 'Lato, sans-serif', color: c.text, size: 13 },
+    margin: { t: 20, r: 20, b: 60, l: 70 },
+    xaxis: {
+      title: { text: 'Panel number', font: { color: c.muted, size: 12 } },
+      gridcolor: c.grid,
+      zerolinecolor: c.grid,
+      color: c.muted,
+      dtick: 1,
+      tickmode: 'linear'
+    },
+    yaxis: {
+      gridcolor: c.grid,
+      zerolinecolor: c.grid,
+      color: c.muted,
+      zeroline: true,
+      showticklabels: false
+    },
+    annotations,
+    legend: {
+      font: { color: c.muted, size: 11 },
+      bgcolor: 'transparent',
+      orientation: 'h',
+      x: 0,
+      xanchor: 'left',
+      y: -0.18,
+      yanchor: 'top'
+    },
+    hovermode: false,
+    showlegend: Boolean(chain0.x.length || chain180.x.length)
+  };
+
+  _applyPanelNumberXAxis(layout, panelStats);
+
+  Plotly.react('plot-panel-roll-lines', traces, layout, _cfg);
+}
+
+// ─── Side view — Roll only, 0° pass, 3 centre panels ──────────────────────
+// Each panel is drawn as a line from (−0.5, −roll/2) through (0, 0) to
+// (+0.5, +roll/2).  All three lines cross zero at the panel centre.
+// For a 2° roll the y-range is exactly ±1, matching the expected data range.
+// Only shown when axis === 'roll'; hidden via CSS for pitch.
+
+function renderSideViewPlot(panelStats, axis) {
+  const c = _themeColors();
+
+  if (axis !== 'roll' || !panelStats.length) {
+    Plotly.react('plot-side-view', [], { paper_bgcolor: c.paper, plot_bgcolor: c.plot }, _cfg);
+    return;
+  }
+
+  const sorted0 = _dedupeFirstPassPerPanel(panelStats, 0).sort((a, b) => a.centerX - b.centerX);
+  if (!sorted0.length) {
+    Plotly.react('plot-side-view', [], { paper_bgcolor: c.paper, plot_bgcolor: c.plot }, _cfg);
+    return;
+  }
+
+  // 3 middle panels from the 0° chain
+  const midIdx = Math.floor(sorted0.length / 2);
+  const lo     = Math.max(0, midIdx - 1);
+  const hi     = Math.min(sorted0.length - 1, midIdx + 1);
+  const panels = sorted0.slice(lo, hi + 1);
+
+  const LINE_COLORS = ['#C47A10', '#3A8FC4', '#3DB87A'];
+  const POS_LABELS  = ['Left', 'Centre', 'Right'];
+
+  // Dotted zero reference
+  const traces = [{
+    x: [-0.5, 0.5], y: [0, 0],
+    type: 'scatter', mode: 'lines',
+    line: { color: c.grid, width: 1, dash: 'dot' },
+    showlegend: false, hoverinfo: 'skip'
+  }];
+
+  panels.forEach((s, i) => {
+    const roll  = _displayedMeanRoll(s);
+    const color = LINE_COLORS[i % LINE_COLORS.length];
+    const label = `${POS_LABELS[i] || 'Panel'} ${Math.abs(s.panel_no)} (${_formatPitchLabel(roll)}°)`;
+    traces.push({
+      x: [-0.5, 0, 0.5],
+      y: [-roll / 2, 0, roll / 2],
+      type: 'scatter', mode: 'lines',
+      name: label,
+      line: { color, width: 3 },
+      hovertemplate: `<b>${label}</b><extra></extra>`
+    });
+  });
+
+  const layout = {
+    paper_bgcolor: c.paper,
+    plot_bgcolor:  c.plot,
+    font: { family: 'Lato, sans-serif', color: c.text, size: 13 },
+    margin: { t: 36, r: 16, b: 70, l: 50 },
+    title: {
+      text: 'Side view — Roll',
+      font: { color: c.muted, size: 12 },
+      x: 0.5, xanchor: 'center'
+    },
+    xaxis: {
+      range: [-0.5, 0.5],
+      gridcolor: c.grid, zerolinecolor: c.grid, zerolinewidth: 2,
+      color: c.muted,
+      tickvals:  [-0.5, 0, 0.5],
+      ticktext:  ['Left edge', 'Centre', 'Right edge'],
+      tickmode: 'array'
+    },
+    yaxis: {
+      title: { text: 'Roll (deg)', font: { color: c.muted, size: 12 } },
+      gridcolor: c.grid, zerolinecolor: c.grid, zerolinewidth: 2,
+      color: c.muted, zeroline: true
+    },
+    legend: {
+      font: { color: c.muted, size: 11 },
+      bgcolor: 'transparent',
+      orientation: 'h',
+      x: 0, xanchor: 'left',
+      y: -0.22, yanchor: 'top'
+    },
+    hovermode: 'closest',
+    showlegend: true
+  };
+
+  Plotly.react('plot-side-view', traces, layout, _cfg);
+}
+
+function _buildTiltChainRoll(stats, dir, color) {
+  const sorted = _dedupeFirstPassPerPanel(stats, dir).sort(
+    (a, b) => a.centerX - b.centerX
+  );
+
+  if (!sorted.length) return { x: [], y: [], annotations: [] };
+
+  const x = [];
+  const y = [];
+  const annotations = [];
+  const LABEL_OFFSET = 0.15;
+  const above = dir === 0;
+
+  let curY = 0;
+
+  for (let i = 0; i < sorted.length; i++) {
+    const s = sorted[i];
+    const displayed = _displayedMeanRoll(s);
+    const thetaDeg = Math.max(-89, Math.min(89, displayed * 10));
+    const theta = (thetaDeg * Math.PI) / 180;
+
+    const xL = s.panel_no - 0.5;
+    const xR = s.panel_no + 0.5;
+    const yL = curY;
+    const yR = curY + Math.tan(theta);
+
+    if (i === 0) {
+      x.push(xL);
+      y.push(yL);
+    }
+    x.push(xR);
+    y.push(yR);
+
+    const yMid = (yL + yR) / 2;
+    const textY = above ? yMid + LABEL_OFFSET : yMid - LABEL_OFFSET;
+
+    annotations.push({
+      x: s.panel_no,
+      y: textY,
+      text: _formatPitchLabel(displayed),
+      showarrow: false,
+      xref: 'x',
+      yref: 'y',
+      font: { color, size: 13, family: 'Lato, sans-serif' },
+      xanchor: 'center',
+      yanchor: above ? 'bottom' : 'top'
+    });
+
+    curY = yR;
+  }
+
+  return { x, y, annotations };
 }

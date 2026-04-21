@@ -343,25 +343,101 @@ body {
   border-style: solid;
 }
 
-/* ─── Plot stack (panel charts + distance pitch) ─────────────────────────── */
+/* ─── Plot area — left column (toggled) + right side-view ───────────────── */
 .plot-area {
   padding: 0;
   display: flex;
-  flex-direction: column;
-  min-height: calc(100vh - var(--topnav-height));
+  flex-direction: row;
+  align-items: stretch;
 }
 
+.plot-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#plot-panel-tilt-lines,
+#plot-panel-roll-lines,
 #plot-panel-pitch,
-#plot-panel-tilt-lines {
+#plot-panel-roll {
   flex: 0 0 320px;
   width: 100%;
   height: 320px;
 }
 
 #plot-pitch {
-  flex: 1 1 auto;
-  width: 100%;
-  min-height: 300px;
+  display: none;
+}
+
+#plot-side-view {
+  flex: 0 0 auto;
+  width: 300px;
+  height: 640px;
+}
+
+.resize-handle {
+  flex: 0 0 5px;
+  width: 5px;
+  cursor: col-resize;
+  background: var(--color-border);
+  transition: background-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.resize-handle:hover,
+.resize-handle.dragging {
+  background: var(--color-primary);
+}
+
+/* Hide the inactive axis pair and the side view for pitch */
+.plot-area[data-axis="pitch"] #plot-panel-roll-lines,
+.plot-area[data-axis="pitch"] #plot-panel-roll,
+.plot-area[data-axis="pitch"] #plot-side-view {
+  display: none;
+}
+
+.plot-area[data-axis="roll"] #plot-panel-tilt-lines,
+.plot-area[data-axis="roll"] #plot-panel-pitch {
+  display: none;
+}
+
+/* ─── Axis toggle (Pitch / Roll pill in topnav) ──────────────────────────── */
+.axis-toggle {
+  display: flex;
+  align-items: center;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+
+.axis-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  line-height: 1.4;
+}
+
+.axis-btn.active {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.axis-btn:hover:not(.active) {
+  background: var(--color-border);
+  color: var(--color-text-primary);
 }
 
 /* ─── Focus rings ────────────────────────────────────────────────────────── */

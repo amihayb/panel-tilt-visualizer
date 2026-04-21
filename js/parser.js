@@ -91,7 +91,14 @@ function parseCSV(text) {
     row._pitch =
       rawPitch == null || Number.isNaN(rawPitch) ? NaN : rawPitch - bias;
 
-    row._roll = applyScale('Roll'); // degrees
+    const rawRoll = applyScale('Roll');
+    row._rollRaw = rawRoll;
+    const biasRoll =
+      typeof CFG.biasRoll === 'number' && !Number.isNaN(CFG.biasRoll)
+        ? CFG.biasRoll
+        : 0;
+    row._roll =
+      rawRoll == null || Number.isNaN(rawRoll) ? NaN : rawRoll - biasRoll;
     row._encR  = parseFloat(row['EncoderRight']);
     row._encL  = parseFloat(row['EncoderLeft']);
 
@@ -109,6 +116,18 @@ function reapplyPitchBias(rows) {
   for (const row of rows) {
     const raw = row._pitchRaw;
     row._pitch =
+      raw == null || Number.isNaN(raw) ? NaN : raw - bias;
+  }
+}
+
+// Recompute `row._roll` from `_rollRaw` and current `CFG.biasRoll`.
+// Call after the user changes roll bias in the UI.
+function reapplyRollBias(rows) {
+  let bias = Number(CFG.biasRoll);
+  if (!Number.isFinite(bias)) bias = 0;
+  for (const row of rows) {
+    const raw = row._rollRaw;
+    row._roll =
       raw == null || Number.isNaN(raw) ? NaN : raw - bias;
   }
 }
@@ -407,12 +426,14 @@ function computePanelStats(rows) {
     const windowRows = runRows.filter(r => Math.abs(r._x - centerX) <= HALF_WINDOW);
     const sampleRows = windowRows.length > 0 ? windowRows : runRows;
     const meanPitch  = sampleRows.reduce((s, r) => s + r._pitch, 0) / sampleRows.length;
+    const meanRoll   = sampleRows.reduce((s, r) => s + r._roll,  0) / sampleRows.length;
 
     return {
       panel_no:       runRows[0]._panel_no,
       dir,
       centerX,
       meanPitch,
+      meanRoll,
       windowRowCount: sampleRows.length
     };
   }

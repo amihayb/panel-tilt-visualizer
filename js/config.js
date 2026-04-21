@@ -46,7 +46,9 @@ const CFG_DEFAULTS = {
   },
 
   /** Degrees subtracted from scaled Pitch after CSV load (`pitch = pitch_raw - biasPitch`). */
-  biasPitch: 1.1
+  biasPitch: 1.1,
+  /** Degrees subtracted from scaled Roll after CSV load (`roll = roll_raw - biasRoll`). */
+  biasRoll: -1.7
 };
 
 async function loadConfig() {
@@ -60,5 +62,8 @@ async function loadConfig() {
   }
   if (typeof CFG.biasPitch !== 'number' || Number.isNaN(CFG.biasPitch)) {
     CFG.biasPitch = CFG_DEFAULTS.biasPitch;
+  }
+  if (typeof CFG.biasRoll !== 'number' || Number.isNaN(CFG.biasRoll)) {
+    CFG.biasRoll = CFG_DEFAULTS.biasRoll;
   }
 }

@@ -48,5 +48,6 @@
     "lineWidth": 2
   },
 
-  "biasPitch": 1.1
+  "biasPitch": 1.1,
+  "biasRoll": -1.7
 }
