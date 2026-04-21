@@ -308,6 +308,11 @@ function assignPanelNumbers(rows, seg0, seg180) {
   for (const { seg: drive, dir } of allDrives) {
     if (drive.length < 2) continue;
 
+    // Only process rows where edge drive is active — gap detection and the
+    // panel counter must never see stuck-sensor or non-edge rows.
+    const activeDrive = drive.filter(r => r._edgeDrive !== 0);
+    if (activeDrive.length < 2) continue;
+
     // 1-3. State-machine panel splitter with hysteresis:
     //   - Enter gap mode when dPitch/dX > threshold.
     //   - Exit gap mode (start new panel) only after dPitch/dX < 0.5*threshold
@@ -317,14 +322,14 @@ function assignPanelNumbers(rows, seg0, seg180) {
     const STABLE_RATIO   = CFG.gaps.stableRatio;
 
     const panels = [];
-    let cur          = [drive[0]];
+    let cur          = [activeDrive[0]];
     let inGap        = false;
     let stableStartIdx = null;
     let stableDistM  = 0;
 
-    for (let i = 1; i < drive.length; i++) {
-      const prev = drive[i - 1];
-      const row  = drive[i];
+    for (let i = 1; i < activeDrive.length; i++) {
+      const prev = activeDrive[i - 1];
+      const row  = activeDrive[i];
       const dX   = Math.abs(row._x - prev._x);
 
       if (dX < 0.002) {
@@ -350,7 +355,7 @@ function assignPanelNumbers(rows, seg0, seg180) {
           if (stableDistM >= MIN_STABLE_M) {
             // Confirmed stable: close old panel, new one starts at stableStartIdx
             if (cur.length >= 2) panels.push(cur);
-            cur          = drive.slice(stableStartIdx, i + 1);
+            cur          = activeDrive.slice(stableStartIdx, i + 1);
             inGap        = false;
             stableStartIdx = null;
             stableDistM  = 0;
@@ -434,6 +439,14 @@ function computePanelStats(rows) {
       centerX,
       meanPitch,
       meanRoll,
+      edgeDrive:      (() => {
+        let cE = 0, cW = 0;
+        for (const r of runRows) {
+          if (r._edgeDrive ===  1) cE++;
+          if (r._edgeDrive === -1) cW++;
+        }
+        return cE === 0 && cW === 0 ? 0 : (cE >= cW ? 1 : -1);
+      })(),
       windowRowCount: sampleRows.length
     };
   }
@@ -460,6 +473,87 @@ function computePanelStats(rows) {
   if (currentRun.length > 0) stats.push(statsForRun(currentRun));
 
   return stats; // time order — one entry per contiguous panel occurrence
+}
+
+// ─── Edge drive detection ─────────────────────────────────────────────────
+// Stamps `_edgeDrive` on every row in-place using absolute (compass) direction:
+//   +1  : East-edge drive
+//   -1  : West-edge drive
+//    0  : no edge drive, stuck-sensor row, or outside a qualifying drive
+//
+// Convention (direction 0° = North, 180° = South):
+//   North (0°) + UltrasonicRight predominates → West edge  (-1)
+//   North (0°) + UltrasonicLeft  predominates → East edge  (+1)
+//   South (180°) + UltrasonicRight predominates → East edge (+1)
+//   South (180°) + UltrasonicLeft  predominates → West edge (-1)
+//
+// Per-row validity: rows where the dominant sensor is continuously = 1 for
+// longer than CFG.edgeDrive.maxContinuousSecs are reset to 0.
+// All other rows in the segment keep the segment's edge direction value.
+
+// Stamps all rows in seg with edgeVal, then resets rows in "stuck" runs
+// (dominant sensor continuously on > maxSecs) back to 0.
+function _stampEdgeSegment(seg, dominantKey, edgeVal, maxSecs) {
+  for (const row of seg) row._edgeDrive = edgeVal;
+
+  let runStartTime = null;
+  let runStartIdx  = -1;
+  for (let i = 0; i <= seg.length; i++) {
+    const isOn = i < seg.length && (() => {
+      const v = parseFloat(seg[i][dominantKey]);
+      return !isNaN(v) && v > 0.5;
+    })();
+
+    if (isOn) {
+      if (runStartIdx === -1) { runStartTime = seg[i]._time_s; runStartIdx = i; }
+    } else if (runStartIdx !== -1) {
+      const dur = seg[i - 1]._time_s - runStartTime;
+      if (dur > maxSecs) {
+        for (let j = runStartIdx; j < i; j++) seg[j]._edgeDrive = 0;
+      }
+      runStartTime = null;
+      runStartIdx  = -1;
+    }
+  }
+}
+
+function computeEdgeDrive(rows, seg0, seg180) {
+  const maxSecs = (CFG.edgeDrive && CFG.edgeDrive.maxContinuousSecs) ?? 2;
+
+  // 1. Default all rows to 0
+  for (const row of rows) row._edgeDrive = 0;
+
+  // 2. Helper: count active rows per sensor in a segment
+  function countSensors(seg) {
+    let cR = 0, cL = 0;
+    for (const row of seg) {
+      const vR = parseFloat(row['UltrasonicRight']);
+      const vL = parseFloat(row['UltrasonicLeft']);
+      if (!isNaN(vR) && vR > 0.5) cR++;
+      if (!isNaN(vL) && vL > 0.5) cL++;
+    }
+    return { cR, cL };
+  }
+
+  // 3. North segments (dir=0°): Right→West(-1), Left→East(+1)
+  for (const seg of seg0) {
+    const { cR, cL } = countSensors(seg);
+    if (cR === 0 && cL === 0) continue;
+    const rightDominates = cR >= cL;
+    const dominantKey    = rightDominates ? 'UltrasonicRight' : 'UltrasonicLeft';
+    const edgeVal        = rightDominates ? -1 : 1;
+    _stampEdgeSegment(seg, dominantKey, edgeVal, maxSecs);
+  }
+
+  // 4. South segments (dir=180°): Right→East(+1), Left→West(-1)
+  for (const seg of seg180) {
+    const { cR, cL } = countSensors(seg);
+    if (cR === 0 && cL === 0) continue;
+    const rightDominates = cR >= cL;
+    const dominantKey    = rightDominates ? 'UltrasonicRight' : 'UltrasonicLeft';
+    const edgeVal        = rightDominates ? 1 : -1;
+    _stampEdgeSegment(seg, dominantKey, edgeVal, maxSecs);
+  }
 }
 
 // ─── Stats bar update ─────────────────────────────────────────────────────

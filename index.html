@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <title>Panel Tilt — Robot Telemetry</title>
 
+  <!-- Open Graph / Social Media -->
+  <meta property="og:title" content="Panel Tilt – Robot Telemetry Visualizer" />
+  <meta property="og:description" content="Browser-based tool for loading, analyzing, and visualizing solar-panel inspection robot telemetry — pitch, roll, odometry, and panel stats." />
+  <meta property="og:image" content="https://raw.githubusercontent.com/amihayb/panel-tilt-visualizer/main/images/nextpower-icon-1200x630.png" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://amihayb.github.io/panel-tilt-visualizer/" />
+
   <!-- Apply theme before first paint to avoid flash -->
   <script>
     (function () {
@@ -19,7 +26,7 @@
   <link href="css/style.css" rel="stylesheet">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <script src="vendor/plotly.min.js"></script>
 </head>
 <body>
 
@@ -53,11 +60,10 @@
       <i class="fa fa-moon-o" id="theme-icon"></i>
     </button>
 
-    <img src="images/logo-title.svg" alt="Blau Robotics logo" class="headImg" hidden>
   </div>
 
   <!-- ─── Stats bar ──────────────────────────────────────────────────────── -->
-  <div class="stats-bar" id="stats-bar" style="display:none">
+  <div class="stats-bar hidden" id="stats-bar">
     <div class="stat-card">
       <div class="stat-value" id="stat-rows">—</div>
       <div class="stat-label">Rows</div>
@@ -95,16 +101,22 @@
   </div>
 
   <!-- ─── Plot area ─────────────────────────────────────────────────────── -->
-  <div class="plot-area" id="plot-area" data-axis="pitch" style="display:none">
+  <div class="plot-area hidden" id="plot-area" data-axis="pitch">
     <div class="plot-column">
       <div id="plot-panel-tilt-lines"></div>
       <div id="plot-panel-roll-lines"></div>
       <div id="plot-panel-pitch"></div>
       <div id="plot-panel-roll"></div>
-      <div id="plot-pitch" style="display:none"></div>
+      <div id="plot-pitch"></div>
     </div>
     <div class="resize-handle" id="resize-handle"></div>
-    <div id="plot-side-view"></div>
+    <div class="side-view-wrapper" id="side-view-wrapper">
+      <div class="side-view-toggle axis-toggle" id="side-view-edge-toggle">
+        <button class="axis-btn active" data-edge="east">East</button>
+        <button class="axis-btn" data-edge="west">West</button>
+      </div>
+      <div id="plot-side-view"></div>
+    </div>
   </div>
 
   <!-- ─── Scripts ────────────────────────────────────────────────────────── -->
@@ -112,258 +124,6 @@
   <script src="js/parser.js"></script>
   <script src="js/exporter.js"></script>
   <script src="js/plots.js"></script>
-  <script>
-    (async () => {
-      await loadConfig();
-
-      const fileInput  = document.getElementById('file-input');
-      const exportBtn       = document.getElementById('export-btn');
-      const exportPanelBtn  = document.getElementById('export-panel-btn');
-      const dropZone        = document.getElementById('drop-zone');
-      const statsBar   = document.getElementById('stats-bar');
-      const plotArea   = document.getElementById('plot-area');
-      const themeBtn   = document.getElementById('theme-toggle');
-      const themeIcon  = document.getElementById('theme-icon');
-      const axisToggle = document.getElementById('axis-toggle');
-      const axisBtns   = axisToggle.querySelectorAll('.axis-btn');
-
-      let loadedRows, loadedHeaders, loadedPanelStats;
-      let loadedSeg0, loadedSeg180;
-
-      const biasPitchInput = document.getElementById('bias-pitch-input');
-      const biasRollInput  = document.getElementById('bias-roll-input');
-
-      // ── File handling ───────────────────────────────────────────────────
-      function handleFile(file) {
-        const reader = new FileReader();
-        reader.addEventListener('load', (e) => {
-          const text = e.target.result || '';
-          const { headers, rows } = parseCSV(text);
-
-          if (!rows.length) {
-            alert('No data rows found in the file.');
-            return;
-          }
-
-          const { seg0, seg180 } = detectDriveSegments(rows);
-          const allQualSegs = [...seg0, ...seg180];
-
-          computeOdometry(rows, allQualSegs);
-          assignPanelNumbers(rows, seg0, seg180);
-
-          loadedPanelStats = computePanelStats(rows);
-          loadedRows       = rows;
-          loadedHeaders    = headers;
-          loadedSeg0       = seg0;
-          loadedSeg180     = seg180;
-
-          biasPitchInput.value = String(CFG.biasPitch);
-          biasRollInput.value  = String(CFG.biasRoll);
-
-          // Show UI before rendering so Plotly measures real widths
-          dropZone.style.display  = 'none';
-          statsBar.style.display  = 'flex';
-          plotArea.style.display  = 'flex';
-
-          updateStatsBar(rows);
-          renderPanelMeanPitchPlot(loadedPanelStats);
-          renderPanelTiltLinesPlot(loadedPanelStats);
-          renderPanelMeanRollPlot(loadedPanelStats);
-          renderPanelRollLinesPlot(loadedPanelStats);
-          renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch');
-          renderPitchPlot(rows);
-
-          exportBtn.classList.remove('disabled');
-          exportPanelBtn.classList.remove('disabled');
-        });
-        reader.readAsText(file);
-      }
-
-      fileInput.addEventListener('change', (e) => {
-        if (e.target.files[0]) handleFile(e.target.files[0]);
-        e.target.value = '';
-      });
-
-      exportBtn.addEventListener('click', () => {
-        if (loadedRows) exportCSV(loadedRows, loadedHeaders);
-      });
-
-      exportPanelBtn.addEventListener('click', () => {
-        if (loadedPanelStats) exportPanelStatsCSV(loadedPanelStats);
-      });
-
-      // ── Bias pitch (live): replot + re-run panel detection ───────────────
-      function parseBiasInput(str) {
-        const t = String(str).trim().replace(',', '.');
-        if (
-          t === '' ||
-          t === '-' ||
-          t === '+' ||
-          t === '.' ||
-          t === '-.' ||
-          t === '+.'
-        )
-          return NaN;
-        const v = parseFloat(t);
-        return Number.isFinite(v) ? v : NaN;
-      }
-
-      function applyBiasAndRefreshPlots() {
-        if (!loadedRows) return false;
-        const v = parseBiasInput(biasPitchInput.value);
-        if (!Number.isFinite(v)) return false;
-        CFG.biasPitch = v;
-        reapplyPitchBias(loadedRows);
-        assignPanelNumbers(loadedRows, loadedSeg0 || [], loadedSeg180 || []);
-        loadedPanelStats = computePanelStats(loadedRows);
-        renderPanelMeanPitchPlot(loadedPanelStats);
-        renderPanelTiltLinesPlot(loadedPanelStats);
-        renderPanelMeanRollPlot(loadedPanelStats);
-        renderPanelRollLinesPlot(loadedPanelStats);
-        renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch');
-        renderPitchPlot(loadedRows);
-        return true;
-      }
-
-      biasPitchInput.addEventListener('input', () => {
-        applyBiasAndRefreshPlots();
-      });
-
-      biasPitchInput.addEventListener('change', () => {
-        applyBiasAndRefreshPlots();
-      });
-
-      biasPitchInput.addEventListener('blur', () => {
-        if (!loadedRows) return;
-        if (!applyBiasAndRefreshPlots())
-          biasPitchInput.value = String(CFG.biasPitch);
-      });
-
-      // ── Bias roll (live): replot roll charts only ────────────────────────
-      function applyRollBiasAndRefreshPlots() {
-        if (!loadedRows) return false;
-        const v = parseBiasInput(biasRollInput.value);
-        if (!Number.isFinite(v)) return false;
-        CFG.biasRoll = v;
-        reapplyRollBias(loadedRows);
-        loadedPanelStats = computePanelStats(loadedRows);
-        renderPanelMeanRollPlot(loadedPanelStats);
-        renderPanelRollLinesPlot(loadedPanelStats);
-        renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch');
-        return true;
-      }
-
-      biasRollInput.addEventListener('input', () => {
-        applyRollBiasAndRefreshPlots();
-      });
-
-      biasRollInput.addEventListener('change', () => {
-        applyRollBiasAndRefreshPlots();
-      });
-
-      biasRollInput.addEventListener('blur', () => {
-        if (!loadedRows) return;
-        if (!applyRollBiasAndRefreshPlots())
-          biasRollInput.value = String(CFG.biasRoll);
-      });
-
-      // ── Click on drop zone opens file picker ────────────────────────────
-      dropZone.addEventListener('click', () => fileInput.click());
-
-      // ── Drag and drop ───────────────────────────────────────────────────
-      document.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.classList.add('drag-active');
-      });
-      document.addEventListener('dragleave', () => {
-        dropZone.classList.remove('drag-active');
-      });
-      document.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('drag-active');
-        const file = e.dataTransfer && e.dataTransfer.files[0];
-        if (file) handleFile(file);
-      });
-
-      // ── Theme toggle ────────────────────────────────────────────────────
-      function applyTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('pt-theme', theme);
-        themeIcon.className = theme === 'dark' ? 'fa fa-moon-o' : 'fa fa-sun-o';
-        // Re-render plots so Plotly picks up the new CSS color variables
-        if (loadedPanelStats) {
-          renderPanelMeanPitchPlot(loadedPanelStats);
-          renderPanelTiltLinesPlot(loadedPanelStats);
-          renderPanelMeanRollPlot(loadedPanelStats);
-          renderPanelRollLinesPlot(loadedPanelStats);
-          renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch');
-        }
-        if (loadedRows) renderPitchPlot(loadedRows);
-      }
-
-      themeBtn.addEventListener('click', () => {
-        const current = document.documentElement.getAttribute('data-theme') || 'dark';
-        applyTheme(current === 'dark' ? 'light' : 'dark');
-      });
-
-      applyTheme(localStorage.getItem('pt-theme') || 'dark');
-
-      // ── Side-view resize handle ──────────────────────────────────────────
-      const resizeHandle  = document.getElementById('resize-handle');
-      const sideViewEl    = document.getElementById('plot-side-view');
-
-      let _resizing   = false;
-      let _startX     = 0;
-      let _startWidth = 0;
-
-      resizeHandle.addEventListener('mousedown', (e) => {
-        _resizing   = true;
-        _startX     = e.clientX;
-        _startWidth = sideViewEl.offsetWidth;
-        resizeHandle.classList.add('dragging');
-        document.body.style.cursor    = 'col-resize';
-        document.body.style.userSelect = 'none';
-        e.preventDefault();
-      });
-
-      document.addEventListener('mousemove', (e) => {
-        if (!_resizing) return;
-        // dragging left → larger side view; dragging right → smaller
-        const newWidth = Math.max(150, Math.min(700, _startWidth + (_startX - e.clientX)));
-        sideViewEl.style.width     = newWidth + 'px';
-        sideViewEl.style.flexBasis = newWidth + 'px';
-      });
-
-      document.addEventListener('mouseup', () => {
-        if (!_resizing) return;
-        _resizing = false;
-        resizeHandle.classList.remove('dragging');
-        document.body.style.cursor    = '';
-        document.body.style.userSelect = '';
-        // Let Plotly re-measure all chart containers
-        window.dispatchEvent(new Event('resize'));
-      });
-
-      // ── Pitch / Roll axis toggle ─────────────────────────────────────────
-      axisBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-          const axis = btn.dataset.axis;
-          if (plotArea.dataset.axis === axis) return;
-          axisBtns.forEach(b => b.classList.toggle('active', b === btn));
-          plotArea.dataset.axis = axis;
-          // Re-render the newly visible plots so Plotly measures real widths
-          if (!loadedPanelStats) return;
-          if (axis === 'pitch') {
-            renderPanelTiltLinesPlot(loadedPanelStats);
-            renderPanelMeanPitchPlot(loadedPanelStats);
-          } else {
-            renderPanelRollLinesPlot(loadedPanelStats);
-            renderPanelMeanRollPlot(loadedPanelStats);
-          }
-          renderSideViewPlot(loadedPanelStats, axis);
-        });
-      });
-    })();
-  </script>
+  <script src="js/app.js"></script>
 </body>
 </html>

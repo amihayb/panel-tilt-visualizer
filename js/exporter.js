@@ -3,7 +3,7 @@
 // panel_number is empty for rows outside qualifying drives or in gaps.
 
 function exportCSV(rows, headers) {
-  const newHeaders = [...headers, 'X_m', 'panel_number'];
+  const newHeaders = [...headers, 'X_m', 'panel_number', 'EdgeDrive'];
   const lines = [newHeaders.join(',')];
 
   for (const row of rows) {
@@ -13,7 +13,8 @@ function exportCSV(rows, headers) {
     });
     vals.push(
       row._x.toFixed(4),
-      row._panel_no !== null && row._panel_no !== undefined ? row._panel_no : ''
+      row._panel_no !== null && row._panel_no !== undefined ? row._panel_no : '',
+      row._edgeDrive !== undefined ? row._edgeDrive : 0
     );
     lines.push(vals.join(','));
   }
@@ -32,7 +33,7 @@ function exportCSV(rows, headers) {
 // panel_number is the absolute panel index; direction_deg indicates which pass.
 
 function exportPanelStatsCSV(panelStats) {
-  const headers = ['panel_number', 'direction_deg', 'center_x_m', 'mean_pitch_deg', 'window_row_count'];
+  const headers = ['panel_number', 'direction_deg', 'center_x_m', 'mean_pitch_deg', 'mean_roll_deg', 'edge_drive', 'window_row_count'];
   const lines   = [headers.join(',')];
 
   for (const s of panelStats) {
@@ -41,6 +42,8 @@ function exportPanelStatsCSV(panelStats) {
       s.dir,
       s.centerX.toFixed(4),
       s.meanPitch.toFixed(4),
+      s.meanRoll.toFixed(4),
+      s.edgeDrive ?? 0,
       s.windowRowCount
     ].join(','));
   }

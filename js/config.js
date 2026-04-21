@@ -29,6 +29,10 @@ const CFG_DEFAULTS = {
     startTolDeg: 1
   },
 
+  edgeDrive: {
+    maxContinuousSecs: 2
+  },
+
   gaps: {
     pitchDiffDegPerMeter: 80,
     clusterSpacingM: 0.5,

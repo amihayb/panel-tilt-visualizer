@@ -83,44 +83,44 @@ function renderPanelMeanPitchPlot(panelStats) {
   const c = _themeColors();
   const traces = [];
 
-  const pass0   = panelStats.filter(s => s.dir === 0);
-  const pass180 = panelStats.filter(s => s.dir === 180);
+  const eastEdge = panelStats.filter(s => s.edgeDrive === 1);
+  const westEdge = panelStats.filter(s => s.edgeDrive === -1);
 
-  if (pass0.length) {
+  if (eastEdge.length) {
     traces.push({
-      x:    pass0.map(s => s.panel_no),
-      y:    pass0.map(s => s.meanPitch),
-      text: pass0.map(s =>
+      x:    eastEdge.map(s => s.panel_no),
+      y:    eastEdge.map(s => _displayedMeanPitch(s)),
+      text: eastEdge.map(s =>
         `Panel ${s.panel_no}<br>` +
         `Centre X: ${s.centerX.toFixed(2)} m<br>` +
         `Rows in window: ${s.windowRowCount}`
       ),
       type: 'scatter',
       mode: 'markers',
-      name: '0° pass',
-      marker: { color: '#3A8FC4', size: 9, symbol: 'circle' },
+      name: 'Edge-East',
+      marker: { color: COLOR_0, size: 9, symbol: 'circle' },
       hovertemplate:
         '<b>%{text}</b><br>' +
         'Mean pitch: %{y:.3f}°<extra></extra>'
     });
   }
 
-  if (pass180.length) {
+  if (westEdge.length) {
     traces.push({
-      x:    pass180.map(s => s.panel_no),
-      y:    pass180.map(s => -s.meanPitch),
-      text: pass180.map(s =>
+      x:    westEdge.map(s => s.panel_no),
+      y:    westEdge.map(s => _displayedMeanPitch(s)),
+      text: westEdge.map(s =>
         `Panel ${s.panel_no}<br>` +
         `Centre X: ${s.centerX.toFixed(2)} m<br>` +
         `Rows in window: ${s.windowRowCount}`
       ),
       type: 'scatter',
       mode: 'markers',
-      name: '180° pass',
-      marker: { color: '#D4523A', size: 9, symbol: 'diamond' },
+      name: 'Edge-West',
+      marker: { color: COLOR_180, size: 9, symbol: 'diamond' },
       hovertemplate:
         '<b>%{text}</b><br>' +
-        'Plot pitch (−mean): %{y:.3f}°<extra></extra>'
+        'Mean pitch: %{y:.3f}°<extra></extra>'
     });
   }
 
@@ -189,14 +189,14 @@ const COLOR_0   = '#3A8FC4';
 const COLOR_180 = '#D4523A';
 
 /**
- * panelStats is time-ordered. If the same panel_no appears twice in one direction
- * (second pass), keep only the first occurrence so the polyline stays connected.
+ * panelStats is time-ordered. Keep only the first occurrence of each panel_no
+ * within the given edgeDrive group, so the polyline stays connected.
  */
-function _dedupeFirstPassPerPanel(stats, dir) {
+function _dedupeFirstPassPerPanel(stats, edgeDrive) {
   const seen = new Set();
   const out = [];
   for (const s of stats) {
-    if (s.dir !== dir) continue;
+    if (s.edgeDrive !== edgeDrive) continue;
     if (seen.has(s.panel_no)) continue;
     seen.add(s.panel_no);
     out.push(s);
@@ -212,8 +212,8 @@ function _dedupeFirstPassPerPanel(stats, dir) {
  * Each segment width = 1 unit (panel_no−0.5 … panel_no+0.5).
  * Start y of first segment = 0; subsequent segments inherit the previous end y.
  */
-function _buildTiltChain(stats, dir, color) {
-  const sorted = _dedupeFirstPassPerPanel(stats, dir).sort(
+function _buildTiltChain(stats, edgeDrive, color) {
+  const sorted = _dedupeFirstPassPerPanel(stats, edgeDrive).sort(
     (a, b) => a.centerX - b.centerX
   );
 
@@ -222,8 +222,8 @@ function _buildTiltChain(stats, dir, color) {
   const x = [];
   const y = [];
   const annotations = [];
-  const LABEL_OFFSET = 0.15; // data units above/below the segment midpoint
-  const above = dir === 0;
+  const LABEL_OFFSET = 0.15;
+  const above = edgeDrive === 1; // East-edge labels above, West-edge below
 
   let curY = 0;
 
@@ -233,7 +233,6 @@ function _buildTiltChain(stats, dir, color) {
     const thetaDeg = Math.max(-89, Math.min(89, displayed * 10));
     const theta = (thetaDeg * Math.PI) / 180;
 
-    // Each panel occupies exactly 1 x-unit → dy = tan(θ) × 1
     const xL = s.panel_no - 0.5;
     const xR = s.panel_no + 0.5;
     const yL = curY;
@@ -270,30 +269,30 @@ function _buildTiltChain(stats, dir, color) {
 function renderPanelTiltLinesPlot(panelStats) {
   const c = _themeColors();
 
-  const chain0   = _buildTiltChain(panelStats, 0,   COLOR_0);
-  const chain180 = _buildTiltChain(panelStats, 180, COLOR_180);
+  const chainRight = _buildTiltChain(panelStats,  1, COLOR_0);
+  const chainLeft  = _buildTiltChain(panelStats, -1, COLOR_180);
 
   const traces = [];
 
-  if (chain0.x.length) {
+  if (chainRight.x.length) {
     traces.push({
-      x: chain0.x,
-      y: chain0.y,
+      x: chainRight.x,
+      y: chainRight.y,
       type: 'scatter',
       mode: 'lines',
-      name: '0° pass',
+      name: 'Edge-East',
       line: { color: COLOR_0, width: 3 },
       hoverinfo: 'skip'
     });
   }
 
-  if (chain180.x.length) {
+  if (chainLeft.x.length) {
     traces.push({
-      x: chain180.x,
-      y: chain180.y,
+      x: chainLeft.x,
+      y: chainLeft.y,
       type: 'scatter',
       mode: 'lines',
-      name: '180° pass',
+      name: 'Edge-West',
       line: { color: COLOR_180, width: 3 },
       hoverinfo: 'skip'
     });
@@ -303,7 +302,7 @@ function renderPanelTiltLinesPlot(panelStats) {
     traces.push({ x: [], y: [], type: 'scatter', mode: 'lines', showlegend: false });
   }
 
-  const annotations = [...chain0.annotations, ...chain180.annotations];
+  const annotations = [...chainRight.annotations, ...chainLeft.annotations];
 
   const layout = {
     paper_bgcolor: c.paper,
@@ -336,7 +335,7 @@ function renderPanelTiltLinesPlot(panelStats) {
       yanchor: 'top'
     },
     hovermode: false,
-    showlegend: Boolean(chain0.x.length || chain180.x.length)
+    showlegend: Boolean(chainRight.x.length || chainLeft.x.length)
   };
 
   _applyPanelNumberXAxis(layout, panelStats);
@@ -435,44 +434,44 @@ function renderPanelMeanRollPlot(panelStats) {
   const c = _themeColors();
   const traces = [];
 
-  const pass0   = panelStats.filter(s => s.dir === 0);
-  const pass180 = panelStats.filter(s => s.dir === 180);
+  const eastEdge = panelStats.filter(s => s.edgeDrive === 1);
+  const westEdge = panelStats.filter(s => s.edgeDrive === -1);
 
-  if (pass0.length) {
+  if (eastEdge.length) {
     traces.push({
-      x:    pass0.map(s => s.panel_no),
-      y:    pass0.map(s => s.meanRoll),
-      text: pass0.map(s =>
+      x:    eastEdge.map(s => s.panel_no),
+      y:    eastEdge.map(s => _displayedMeanRoll(s)),
+      text: eastEdge.map(s =>
         `Panel ${s.panel_no}<br>` +
         `Centre X: ${s.centerX.toFixed(2)} m<br>` +
         `Rows in window: ${s.windowRowCount}`
       ),
       type: 'scatter',
       mode: 'markers',
-      name: '0° pass',
-      marker: { color: '#3A8FC4', size: 9, symbol: 'circle' },
+      name: 'Edge-East',
+      marker: { color: COLOR_0, size: 9, symbol: 'circle' },
       hovertemplate:
         '<b>%{text}</b><br>' +
         'Mean roll: %{y:.3f}°<extra></extra>'
     });
   }
 
-  if (pass180.length) {
+  if (westEdge.length) {
     traces.push({
-      x:    pass180.map(s => s.panel_no),
-      y:    pass180.map(s => -s.meanRoll),
-      text: pass180.map(s =>
+      x:    westEdge.map(s => s.panel_no),
+      y:    westEdge.map(s => _displayedMeanRoll(s)),
+      text: westEdge.map(s =>
         `Panel ${s.panel_no}<br>` +
         `Centre X: ${s.centerX.toFixed(2)} m<br>` +
         `Rows in window: ${s.windowRowCount}`
       ),
       type: 'scatter',
       mode: 'markers',
-      name: '180° pass',
-      marker: { color: '#D4523A', size: 9, symbol: 'diamond' },
+      name: 'Edge-West',
+      marker: { color: COLOR_180, size: 9, symbol: 'diamond' },
       hovertemplate:
         '<b>%{text}</b><br>' +
-        'Plot roll (−mean): %{y:.3f}°<extra></extra>'
+        'Mean roll: %{y:.3f}°<extra></extra>'
     });
   }
 
@@ -520,30 +519,30 @@ function renderPanelMeanRollPlot(panelStats) {
 function renderPanelRollLinesPlot(panelStats) {
   const c = _themeColors();
 
-  const chain0   = _buildTiltChainRoll(panelStats, 0,   COLOR_0);
-  const chain180 = _buildTiltChainRoll(panelStats, 180, COLOR_180);
+  const chainRight = _buildTiltChainRoll(panelStats,  1, COLOR_0);
+  const chainLeft  = _buildTiltChainRoll(panelStats, -1, COLOR_180);
 
   const traces = [];
 
-  if (chain0.x.length) {
+  if (chainRight.x.length) {
     traces.push({
-      x: chain0.x,
-      y: chain0.y,
+      x: chainRight.x,
+      y: chainRight.y,
       type: 'scatter',
       mode: 'lines',
-      name: '0° pass',
+      name: 'Edge-East',
       line: { color: COLOR_0, width: 3 },
       hoverinfo: 'skip'
     });
   }
 
-  if (chain180.x.length) {
+  if (chainLeft.x.length) {
     traces.push({
-      x: chain180.x,
-      y: chain180.y,
+      x: chainLeft.x,
+      y: chainLeft.y,
       type: 'scatter',
       mode: 'lines',
-      name: '180° pass',
+      name: 'Edge-West',
       line: { color: COLOR_180, width: 3 },
       hoverinfo: 'skip'
     });
@@ -553,7 +552,7 @@ function renderPanelRollLinesPlot(panelStats) {
     traces.push({ x: [], y: [], type: 'scatter', mode: 'lines', showlegend: false });
   }
 
-  const annotations = [...chain0.annotations, ...chain180.annotations];
+  const annotations = [...chainRight.annotations, ...chainLeft.annotations];
 
   const layout = {
     paper_bgcolor: c.paper,
@@ -586,7 +585,7 @@ function renderPanelRollLinesPlot(panelStats) {
       yanchor: 'top'
     },
     hovermode: false,
-    showlegend: Boolean(chain0.x.length || chain180.x.length)
+    showlegend: Boolean(chainRight.x.length || chainLeft.x.length)
   };
 
   _applyPanelNumberXAxis(layout, panelStats);
@@ -600,7 +599,7 @@ function renderPanelRollLinesPlot(panelStats) {
 // For a 2° roll the y-range is exactly ±1, matching the expected data range.
 // Only shown when axis === 'roll'; hidden via CSS for pitch.
 
-function renderSideViewPlot(panelStats, axis) {
+function renderSideViewPlot(panelStats, axis, sideViewEdge = 1) {
   const c = _themeColors();
 
   if (axis !== 'roll' || !panelStats.length) {
@@ -608,17 +607,21 @@ function renderSideViewPlot(panelStats, axis) {
     return;
   }
 
-  const sorted0 = _dedupeFirstPassPerPanel(panelStats, 0).sort((a, b) => a.centerX - b.centerX);
-  if (!sorted0.length) {
+  const edgeLabel  = sideViewEdge === 1 ? 'Edge-East' : 'Edge-West';
+  const sortedEdge = _dedupeFirstPassPerPanel(panelStats, sideViewEdge).sort((a, b) => a.centerX - b.centerX);
+  if (!sortedEdge.length) {
     Plotly.react('plot-side-view', [], { paper_bgcolor: c.paper, plot_bgcolor: c.plot }, _cfg);
     return;
   }
 
-  // 3 middle panels from the 0° chain
-  const midIdx = Math.floor(sorted0.length / 2);
-  const lo     = Math.max(0, midIdx - 1);
-  const hi     = Math.min(sorted0.length - 1, midIdx + 1);
-  const panels = sorted0.slice(lo, hi + 1);
+  // First, middle, and last panels from the selected edge chain
+  const n      = sortedEdge.length;
+  const midIdx = Math.floor(n / 2);
+  const panels = n === 1
+    ? [sortedEdge[0]]
+    : n === 2
+      ? [sortedEdge[0], sortedEdge[1]]
+      : [sortedEdge[0], sortedEdge[midIdx], sortedEdge[n - 1]];
 
   const LINE_COLORS = ['#C47A10', '#3A8FC4', '#3DB87A'];
   const POS_LABELS  = ['Left', 'Centre', 'Right'];
@@ -651,7 +654,7 @@ function renderSideViewPlot(panelStats, axis) {
     font: { family: 'Lato, sans-serif', color: c.text, size: 13 },
     margin: { t: 36, r: 16, b: 70, l: 50 },
     title: {
-      text: 'Side view — Roll',
+      text: `Side view — Roll (${edgeLabel})`,
       font: { color: c.muted, size: 12 },
       x: 0.5, xanchor: 'center'
     },
@@ -682,8 +685,8 @@ function renderSideViewPlot(panelStats, axis) {
   Plotly.react('plot-side-view', traces, layout, _cfg);
 }
 
-function _buildTiltChainRoll(stats, dir, color) {
-  const sorted = _dedupeFirstPassPerPanel(stats, dir).sort(
+function _buildTiltChainRoll(stats, edgeDrive, color) {
+  const sorted = _dedupeFirstPassPerPanel(stats, edgeDrive).sort(
     (a, b) => a.centerX - b.centerX
   );
 
@@ -693,7 +696,7 @@ function _buildTiltChainRoll(stats, dir, color) {
   const y = [];
   const annotations = [];
   const LABEL_OFFSET = 0.15;
-  const above = dir === 0;
+  const above = edgeDrive === 1; // East-edge labels above, West-edge below
 
   let curY = 0;
 

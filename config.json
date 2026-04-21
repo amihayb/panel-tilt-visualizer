@@ -31,6 +31,11 @@
     "startTolDeg": 1
   },
 
+  "edgeDrive": {
+    "_comment": "Edge drive detection — rows where the dominant ultrasonic sensor is continuously = 1 for longer than maxContinuousSecs are excluded from edge drive (set to 0)",
+    "maxContinuousSecs": 2
+  },
+
   "gaps": {
     "_comment": "Panel gap detection via |dPitch/dX_m| threshold",
     "pitchDiffDegPerMeter": 80,
