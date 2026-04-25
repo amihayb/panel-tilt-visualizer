@@ -1,9 +1,9 @@
-// Appends X_m and panel_number columns to the original rows and triggers a download.
+// Appends X_m, panel_number, EdgeDrive, and per-panel mean angle columns.
 // Time column is replaced with relative seconds (first row = 0).
 // panel_number is empty for rows outside qualifying drives or in gaps.
 
 function exportCSV(rows, headers) {
-  const newHeaders = [...headers, 'X_m', 'panel_number', 'EdgeDrive'];
+  const newHeaders = [...headers, 'X_m', 'panel_number', 'EdgeDrive', 'mean_pitch_deg', 'mean_roll_deg'];
   const lines = [newHeaders.join(',')];
 
   for (const row of rows) {
@@ -14,7 +14,9 @@ function exportCSV(rows, headers) {
     vals.push(
       row._x.toFixed(4),
       row._panel_no !== null && row._panel_no !== undefined ? row._panel_no : '',
-      row._edgeDrive !== undefined ? row._edgeDrive : 0
+      row._edgeDrive !== undefined ? row._edgeDrive : 0,
+      row._panel_mean_pitch != null ? row._panel_mean_pitch.toFixed(4) : '',
+      row._panel_mean_roll != null ? row._panel_mean_roll.toFixed(4) : ''
     );
     lines.push(vals.join(','));
   }
@@ -41,8 +43,8 @@ function exportPanelStatsCSV(panelStats) {
       s.panel_no,
       s.dir,
       s.centerX.toFixed(4),
-      s.meanPitch.toFixed(4),
-      s.meanRoll.toFixed(4),
+      s.displayedMeanPitch.toFixed(4),
+      s.displayedMeanRoll.toFixed(4),
       s.edgeDrive ?? 0,
       s.windowRowCount
     ].join(','));

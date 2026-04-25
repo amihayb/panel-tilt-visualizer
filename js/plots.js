@@ -22,31 +22,13 @@ function _themeColors() {
 
 const _cfg = { responsive: true, displayModeBar: true, scrollZoom: true };
 
-// Same loose yaw window as parser `detectDriveSegments` (±15° of 0 or 180°)
-const _DRIVE_YAW_TOL_RAD = (15 * Math.PI) / 180;
-
-/** 0 | 180 | null — null = turn / unclear */
-function _classifyDriveYaw(yaw) {
-  if (yaw == null || Number.isNaN(yaw)) return null;
-  if (yaw <= _DRIVE_YAW_TOL_RAD || yaw >= 2 * Math.PI - _DRIVE_YAW_TOL_RAD) return 0;
-  if (Math.abs(yaw - Math.PI) <= _DRIVE_YAW_TOL_RAD) return 180;
-  return null;
-}
-
 /**
- * Pitch for plotting: 180° drive → -pitch (sensor sign vs travel direction).
- * Uses _panel_no sign when set; otherwise yaw classification.
+ * Raw pitch for the hidden legacy distance plot.
+ * Visible panel plots use `displayedMeanPitch` from `computePanelStats`.
  */
 function plotPitchDeg(row) {
   const p = row._pitch;
-  if (p == null || Number.isNaN(p)) return NaN;
-  let dir180 = false;
-  if (row._panel_no != null && row._panel_no !== undefined) {
-    dir180 = row._panel_no < 0;
-  } else {
-    dir180 = _classifyDriveYaw(row._yaw) === 180;
-  }
-  return dir180 ? -p : p;
+  return p == null || Number.isNaN(p) ? NaN : p;
 }
 
 /** Shared x-axis limits for panel-number plots (scatter + tilt lines share the same zoom). */
@@ -89,7 +71,7 @@ function renderPanelMeanPitchPlot(panelStats) {
   if (eastEdge.length) {
     traces.push({
       x:    eastEdge.map(s => s.panel_no),
-      y:    eastEdge.map(s => _displayedMeanPitch(s)),
+      y:    eastEdge.map(s => s.displayedMeanPitch),
       text: eastEdge.map(s =>
         `Panel ${s.panel_no}<br>` +
         `Centre X: ${s.centerX.toFixed(2)} m<br>` +
@@ -108,7 +90,7 @@ function renderPanelMeanPitchPlot(panelStats) {
   if (westEdge.length) {
     traces.push({
       x:    westEdge.map(s => s.panel_no),
-      y:    westEdge.map(s => _displayedMeanPitch(s)),
+      y:    westEdge.map(s => s.displayedMeanPitch),
       text: westEdge.map(s =>
         `Panel ${s.panel_no}<br>` +
         `Centre X: ${s.centerX.toFixed(2)} m<br>` +
@@ -163,16 +145,6 @@ function renderPanelMeanPitchPlot(panelStats) {
   Plotly.react('plot-panel-pitch', traces, layout, _cfg);
 }
 
-// Mean displayed pitch (same sign rule as mean-pitch scatter)
-function _displayedMeanPitch(s) {
-  return s.dir === 180 ? -s.meanPitch : s.meanPitch;
-}
-
-// Mean displayed roll — same sign-flip convention as pitch
-function _displayedMeanRoll(s) {
-  return s.dir === 180 ? -s.meanRoll : s.meanRoll;
-}
-
 function _formatPitchLabel(p) {
   const v = Math.round(p * 100) / 100;
   if (Math.abs(v) < 1e-8) return '0';
@@ -197,7 +169,9 @@ function _dedupeFirstPassPerPanel(stats, edgeDrive) {
   const out = [];
   for (const s of stats) {
     if (s.edgeDrive !== edgeDrive) continue;
-    if (seen.has(s.panel_no)) continue;
+    if (seen.has(s.panel_no)) {
+      continue;
+    }
     seen.add(s.panel_no);
     out.push(s);
   }
@@ -229,7 +203,7 @@ function _buildTiltChain(stats, edgeDrive, color) {
 
   for (let i = 0; i < sorted.length; i++) {
     const s = sorted[i];
-    const displayed = _displayedMeanPitch(s);
+    const displayed = s.displayedMeanPitch;
     const thetaDeg = Math.max(-89, Math.min(89, displayed * 10));
     const theta = (thetaDeg * Math.PI) / 180;
 
@@ -440,7 +414,7 @@ function renderPanelMeanRollPlot(panelStats) {
   if (eastEdge.length) {
     traces.push({
       x:    eastEdge.map(s => s.panel_no),
-      y:    eastEdge.map(s => _displayedMeanRoll(s)),
+      y:    eastEdge.map(s => s.displayedMeanRoll),
       text: eastEdge.map(s =>
         `Panel ${s.panel_no}<br>` +
         `Centre X: ${s.centerX.toFixed(2)} m<br>` +
@@ -459,7 +433,7 @@ function renderPanelMeanRollPlot(panelStats) {
   if (westEdge.length) {
     traces.push({
       x:    westEdge.map(s => s.panel_no),
-      y:    westEdge.map(s => _displayedMeanRoll(s)),
+      y:    westEdge.map(s => s.displayedMeanRoll),
       text: westEdge.map(s =>
         `Panel ${s.panel_no}<br>` +
         `Centre X: ${s.centerX.toFixed(2)} m<br>` +
@@ -594,9 +568,9 @@ function renderPanelRollLinesPlot(panelStats) {
 }
 
 // ─── Side view — Roll only, 0° pass, 3 centre panels ──────────────────────
-// Each panel is drawn as a line from (−0.5, −roll/2) through (0, 0) to
-// (+0.5, +roll/2).  All three lines cross zero at the panel centre.
-// For a 2° roll the y-range is exactly ±1, matching the expected data range.
+// Each panel is drawn as a line from x = -1 to +1, crossing (0, 0), where
+// y = x * tan(roll*10°). This preserves a constant geometric scale and shows
+// the side-view line at the exaggerated roll angle used by the tilt charts.
 // Only shown when axis === 'roll'; hidden via CSS for pitch.
 
 function renderSideViewPlot(panelStats, axis, sideViewEdge = 1) {
@@ -626,21 +600,31 @@ function renderSideViewPlot(panelStats, axis, sideViewEdge = 1) {
   const LINE_COLORS = ['#C47A10', '#3A8FC4', '#3DB87A'];
   const POS_LABELS  = ['Left', 'Centre', 'Right'];
 
+  const SIDE_X_HALF_SPAN = 1;
+  const ROLL_EXAGGERATION = 10;
+  const MAX_EXAGGERATED_DEG = 60;
+  const Y_HALF_RANGE = Math.tan((MAX_EXAGGERATED_DEG * Math.PI) / 180);
+
   // Dotted zero reference
   const traces = [{
-    x: [-0.5, 0.5], y: [0, 0],
+    x: [-SIDE_X_HALF_SPAN, SIDE_X_HALF_SPAN], y: [0, 0],
     type: 'scatter', mode: 'lines',
     line: { color: c.grid, width: 1, dash: 'dot' },
     showlegend: false, hoverinfo: 'skip'
   }];
 
   panels.forEach((s, i) => {
-    const roll  = _displayedMeanRoll(s);
+    const roll  = s.displayedMeanRoll;
+    const exaggeratedDeg = Math.max(
+      -MAX_EXAGGERATED_DEG,
+      Math.min(MAX_EXAGGERATED_DEG, roll * ROLL_EXAGGERATION)
+    );
+    const slope = Math.tan((exaggeratedDeg * Math.PI) / 180);
     const color = LINE_COLORS[i % LINE_COLORS.length];
-    const label = `${POS_LABELS[i] || 'Panel'} ${Math.abs(s.panel_no)} (${_formatPitchLabel(roll)}°)`;
+    const label = `${POS_LABELS[i] || 'Panel'} ${s.panel_no} (${_formatPitchLabel(roll)}°)`;
     traces.push({
-      x: [-0.5, 0, 0.5],
-      y: [-roll / 2, 0, roll / 2],
+      x: [-SIDE_X_HALF_SPAN, 0, SIDE_X_HALF_SPAN],
+      y: [-slope * SIDE_X_HALF_SPAN, 0, slope * SIDE_X_HALF_SPAN],
       type: 'scatter', mode: 'lines',
       name: label,
       line: { color, width: 3 },
@@ -659,17 +643,20 @@ function renderSideViewPlot(panelStats, axis, sideViewEdge = 1) {
       x: 0.5, xanchor: 'center'
     },
     xaxis: {
-      range: [-0.5, 0.5],
+      range: [-SIDE_X_HALF_SPAN, SIDE_X_HALF_SPAN],
       gridcolor: c.grid, zerolinecolor: c.grid, zerolinewidth: 2,
       color: c.muted,
-      tickvals:  [-0.5, 0, 0.5],
+      tickvals:  [-1, 0, 1],
       ticktext:  ['Left edge', 'Centre', 'Right edge'],
       tickmode: 'array'
     },
     yaxis: {
-      title: { text: 'Roll (deg)', font: { color: c.muted, size: 12 } },
+      title: { text: 'Slope', font: { color: c.muted, size: 12 } },
       gridcolor: c.grid, zerolinecolor: c.grid, zerolinewidth: 2,
-      color: c.muted, zeroline: true
+      color: c.muted, zeroline: true,
+      showticklabels: false,
+      ticks: '',
+      range: [-Y_HALF_RANGE, Y_HALF_RANGE]
     },
     legend: {
       font: { color: c.muted, size: 11 },
@@ -702,7 +689,7 @@ function _buildTiltChainRoll(stats, edgeDrive, color) {
 
   for (let i = 0; i < sorted.length; i++) {
     const s = sorted[i];
-    const displayed = _displayedMeanRoll(s);
+    const displayed = s.displayedMeanRoll;
     const thetaDeg = Math.max(-89, Math.min(89, displayed * 10));
     const theta = (thetaDeg * Math.PI) / 180;
 

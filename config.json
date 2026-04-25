@@ -23,7 +23,7 @@
     "gapWidthM": 0.02,
     "ticksPerMeter": 1262,
     "trimM": 0.04,
-    "startPanel": 0
+    "startPanel": 45
   },
 
   "drives": {

@@ -108,15 +108,57 @@ function parseCSV(text) {
   return { headers: header, rows };
 }
 
+function _displayedPitchMean(meanPitch, dir) {
+  let bias = Number(CFG.biasPitch);
+  if (!Number.isFinite(bias)) bias = 0;
+  const sign = dir === 0 ? -1 : 1;
+  return (meanPitch - bias) * sign;
+}
+
+function _displayedRollMean(meanRoll, dir) {
+  const sign = dir === 0 ? -1 : 1;
+  return meanRoll * sign;
+}
+
+function _stampPanelMeanPitchRows(rows, panelStats) {
+  let statIdx = 0;
+  let activeStat = null;
+  let prevPanelNo = null;
+
+  for (const row of rows) {
+    const pn = row._panel_no;
+    if (pn === null || pn === undefined) {
+      activeStat = null;
+      prevPanelNo = null;
+      row._panel_mean_pitch = null;
+      continue;
+    }
+
+    if (activeStat === null || pn !== prevPanelNo) {
+      activeStat = panelStats[statIdx++] || null;
+      prevPanelNo = pn;
+    }
+
+    row._panel_mean_pitch = activeStat ? activeStat.displayedMeanPitch : null;
+  }
+}
+
 // Recompute `row._pitch` from `_pitchRaw` and current `CFG.biasPitch`.
-// Call after the user changes bias in the UI, then re-run assignPanelNumbers.
-function reapplyPitchBias(rows) {
+// Panel boundaries and raw mean pitch remain unchanged.
+function reapplyPitchBias(rows, panelStats = null) {
   let bias = Number(CFG.biasPitch);
   if (!Number.isFinite(bias)) bias = 0;
   for (const row of rows) {
     const raw = row._pitchRaw;
     row._pitch =
       raw == null || Number.isNaN(raw) ? NaN : raw - bias;
+  }
+
+  if (panelStats) {
+    for (const s of panelStats) {
+      s.displayedMeanPitch = _displayedPitchMean(s.meanPitch, s.dir);
+    }
+    _stampPanelMeanPitchRows(rows, panelStats);
   }
 }
 
@@ -274,16 +316,16 @@ function detectDriveSegments(rows) {
 // ─── Panel number assignment ──────────────────────────────────────────────
 // Stamps _panel_no on every row in-place.
 //
-//   -1  : not in a qualifying drive, or in a detected gap
-//   ≥ 0 : ordinal panel index within a continuous directional pass
+//   null: not in a qualifying drive, or in a detected gap
+//   int : signed panel number on the physical row
 //
 // A "pass" is a group of consecutive same-direction segments (0° or 180°).
 // Encoder resets within a pass split it into multiple segments, but the panel
 // counter carries over — it does NOT restart for each sub-segment.
 //
 // Panel number assignment:
-//   - 0°  drives: panels numbered +startPanel, +startPanel+1, … (positive, continuous)
-//   - 180° drives: panels numbered -startPanel, -startPanel-1, … (negative, continuous)
+//   - The first detected panel is numbered CFG.panels.startPanel.
+//   - 0° drives increment panel numbers; 180° drives decrement panel numbers.
 //   - Counters do NOT reset between drives of the same direction.
 //   - All drives processed in time order so counters advance correctly.
 
@@ -300,9 +342,8 @@ function assignPanelNumbers(rows, seg0, seg180) {
   for (const row of rows) row._panel_no = null;
 
   // counter is a number line: 0° moves right (++), 180° moves left (--).
-  // Initialise so the very first panel is ±startPanel.
-  const firstDir = allDrives.find(d => d.seg.length >= 2)?.dir ?? 0;
-  let counter = firstDir === 0 ? startPanel : -startPanel;
+  // The configured startPanel is the signed number of the first detected panel.
+  let counter = startPanel;
   let prevDir = null;
 
   for (const { seg: drive, dir } of allDrives) {
@@ -337,7 +378,7 @@ function assignPanelNumbers(rows, seg0, seg180) {
         continue;
       }
 
-      const dPdX = Math.abs(row._pitch - prev._pitch) / dX;
+      const dPdX = Math.abs(row._pitchRaw - prev._pitchRaw) / dX;
 
       if (!inGap) {
         if (dPdX > threshold) {
@@ -408,10 +449,11 @@ function assignPanelNumbers(rows, seg0, seg180) {
 //   centerX    = midpoint of the run's X range
 //   dir        = 0 or 180, from the yaw of the row closest to centerX
 //                (within ±90° of 0 rad → 0° pass, otherwise → 180° pass)
-//   meanPitch  = mean pitch of rows within ±10 cm of centerX
+//   meanPitch  = raw mean pitch of rows within ±10 cm of centerX
 //                (falls back to all rows in the run if the window is empty)
 //
-// Returns array of { panel_no, dir, centerX, meanPitch, windowRowCount }
+// Returns array of { panel_no, dir, centerX, meanPitch, meanRoll,
+// displayedMeanPitch, displayedMeanRoll, edgeDrive, windowRowCount }
 // in time order (no sorting by panel_no).
 
 function computePanelStats(rows) {
@@ -430,8 +472,15 @@ function computePanelStats(rows) {
 
     const windowRows = runRows.filter(r => Math.abs(r._x - centerX) <= HALF_WINDOW);
     const sampleRows = windowRows.length > 0 ? windowRows : runRows;
-    const meanPitch  = sampleRows.reduce((s, r) => s + r._pitch, 0) / sampleRows.length;
+    const meanPitch  = sampleRows.reduce((s, r) => s + r._pitchRaw, 0) / sampleRows.length;
     const meanRoll   = sampleRows.reduce((s, r) => s + r._roll,  0) / sampleRows.length;
+    const displayedMeanPitch = _displayedPitchMean(meanPitch, dir);
+    const displayedMeanRoll  = _displayedRollMean(meanRoll, dir);
+
+    for (const r of runRows) {
+      r._panel_mean_pitch = displayedMeanPitch;
+      r._panel_mean_roll  = displayedMeanRoll;
+    }
 
     return {
       panel_no:       runRows[0]._panel_no,
@@ -439,6 +488,8 @@ function computePanelStats(rows) {
       centerX,
       meanPitch,
       meanRoll,
+      displayedMeanPitch,
+      displayedMeanRoll,
       edgeDrive:      (() => {
         let cE = 0, cW = 0;
         for (const r of runRows) {
@@ -453,6 +504,11 @@ function computePanelStats(rows) {
 
   const stats   = [];
   let currentRun = [];
+
+  for (const row of rows) {
+    row._panel_mean_pitch = null;
+    row._panel_mean_roll  = null;
+  }
 
   for (const row of rows) {
     const pn = row._panel_no;
@@ -482,10 +538,10 @@ function computePanelStats(rows) {
 //    0  : no edge drive, stuck-sensor row, or outside a qualifying drive
 //
 // Convention (direction 0° = North, 180° = South):
-//   North (0°) + UltrasonicRight predominates → West edge  (-1)
-//   North (0°) + UltrasonicLeft  predominates → East edge  (+1)
-//   South (180°) + UltrasonicRight predominates → East edge (+1)
-//   South (180°) + UltrasonicLeft  predominates → West edge (-1)
+//   North (0°) + UltrasonicRight predominates → East edge  (+1)
+//   North (0°) + UltrasonicLeft  predominates → West edge  (-1)
+//   South (180°) + UltrasonicRight predominates → West edge (-1)
+//   South (180°) + UltrasonicLeft  predominates → East edge (+1)
 //
 // Per-row validity: rows where the dominant sensor is continuously = 1 for
 // longer than CFG.edgeDrive.maxContinuousSecs are reset to 0.
@@ -535,23 +591,23 @@ function computeEdgeDrive(rows, seg0, seg180) {
     return { cR, cL };
   }
 
-  // 3. North segments (dir=0°): Right→West(-1), Left→East(+1)
+  // 3. North segments (dir=0°): Right→East(+1), Left→West(-1)
   for (const seg of seg0) {
     const { cR, cL } = countSensors(seg);
     if (cR === 0 && cL === 0) continue;
     const rightDominates = cR >= cL;
     const dominantKey    = rightDominates ? 'UltrasonicRight' : 'UltrasonicLeft';
-    const edgeVal        = rightDominates ? -1 : 1;
+    const edgeVal        = rightDominates ? 1 : -1;
     _stampEdgeSegment(seg, dominantKey, edgeVal, maxSecs);
   }
 
-  // 4. South segments (dir=180°): Right→East(+1), Left→West(-1)
+  // 4. South segments (dir=180°): Right→West(-1), Left→East(+1)
   for (const seg of seg180) {
     const { cR, cL } = countSensors(seg);
     if (cR === 0 && cL === 0) continue;
     const rightDominates = cR >= cL;
     const dominantKey    = rightDominates ? 'UltrasonicRight' : 'UltrasonicLeft';
-    const edgeVal        = rightDominates ? 1 : -1;
+    const edgeVal        = rightDominates ? -1 : 1;
     _stampEdgeSegment(seg, dominantKey, edgeVal, maxSecs);
   }
 }

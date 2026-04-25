@@ -19,8 +19,8 @@ A robot drives along rows of solar panels, recording IMU angles (yaw/pitch/roll)
 6. **Finds panel boundaries** — sharp changes in pitch-per-meter signal a gap between panels, but **only within edge-drive rows** (`_edgeDrive ≠ 0`). The panel counter never advances for non-edge segments.
 7. **Assigns panel numbers** to every valid (edge-drive) row in the CSV.
 8. **Plots** multiple Plotly views (pitch and roll): mean angle vs panel number (scatter), schematic tilt-line chain, and a side-view of 3 representative panels' roll. All plots are split by **Edge-East / Edge-West** (not by direction).
-9. **Computes panel stats** — walks rows in time order; each contiguous run of the same `_panel_no` is one occurrence; for each, finds centre X, mean pitch, mean roll, and edge direction within ±10 cm of centre.
-10. **Exports** an augmented CSV with `X_m`, `panel_number`, and `EdgeDrive`, and a separate panel-stats CSV (one row per occurrence).
+9. **Computes panel stats** — walks rows in time order; each contiguous run of the same `_panel_no` is one occurrence; for each, finds centre X, raw/displayed mean pitch, displayed mean roll, and edge direction within ±10 cm of centre.
+10. **Exports** an augmented CSV with `X_m`, `panel_number`, `EdgeDrive`, per-panel mean pitch/roll, and a separate panel-stats CSV (one row per occurrence).
 
 There is **no build step**, no Node/npm. Open `index.html` via a local server (needed so `config.json` loads via `fetch`).
 
@@ -61,7 +61,7 @@ Runtime configuration. Loaded at startup by `config.js`. All algorithms read val
 |---------|---------|
 | `odometry` | `ticksPerMeter`, robot start position (`initialX`, `initialY`) |
 | `signalScaleFactors` | Scale + offset for each CSV signal (Yaw, Pitch, Roll, encoders, ultrasonics) |
-| `panels` | Physical panel width/gap (meters), encoder ticks per panel length, trim |
+| `panels` | Physical panel width/gap (meters), encoder ticks per panel length, trim, and signed `startPanel` |
 | `drives` | `startTolDeg` — how close to 0°/180° to start a new drive segment |
 | `gaps` | `pitchDiffDegPerMeter` threshold, `stableMinLengthM`, `stableRatio` — gap detection params |
 | `edgeDrive` | `maxContinuousSecs` (default `2`) — if the dominant ultrasonic sensor is continuously = 1 for longer than this, those rows are excluded from edge-drive detection (set to `_edgeDrive = 0`) |
@@ -76,7 +76,7 @@ Runtime configuration. Loaded at startup by `config.js`. All algorithms read val
 ### `js/config.js`
 **Defines `CFG_DEFAULTS`** (same structure as `config.json`, used as fallback).
 
-**`loadConfig()`** — `async`, fetches `./config.json`, assigns `window.CFG`. On error falls back to `CFG_DEFAULTS`. Validates both `biasPitch` and `biasRoll`; replaces invalid values with defaults.
+**`loadConfig()`** — `async`, fetches `./config.json`, assigns `window.CFG`. On error falls back to `CFG_DEFAULTS`. Validates `biasPitch`, `biasRoll`, and `panels.startPanel`; replaces invalid values with defaults.
 
 Must be loaded first (before `parser.js` and `plots.js`).
 
@@ -98,7 +98,16 @@ The core processing engine. Depends on `window.CFG`.
   - `_encR`, `_encL` — raw encoder values.
 
 **`reapplyPitchBias(rows)`**
-- Recomputes `_pitch` from `_pitchRaw` and current `CFG.biasPitch`. Called when the user edits **Bias pitch** in the stats bar. Triggers full re-detection → panel stats → all plots.
+- Recomputes `_pitch` from `_pitchRaw` and current `CFG.biasPitch`. When `panelStats` are provided, also refreshes displayed pitch values and row `_panel_mean_pitch`. Does **not** re-run panel detection; panel boundaries and raw pitch stats use `_pitchRaw`.
+
+**`_displayedPitchMean(meanPitch, dir)`** *(module-private helper)*
+- Applies `CFG.biasPitch` and the direction sign convention once for displayed pitch (`0°` drives negated).
+
+**`_displayedRollMean(meanRoll, dir)`** *(module-private helper)*
+- Applies the direction sign convention once for displayed roll (`0°` drives negated).
+
+**`_stampPanelMeanPitchRows(rows, panelStats)`** *(module-private helper)*
+- Refreshes row-level `_panel_mean_pitch` from existing panel stats after Bias pitch changes.
 
 **`reapplyRollBias(rows)`**
 - Recomputes `_roll` from `_rollRaw` and current `CFG.biasRoll`. Called when the user edits **Bias roll**. Only recomputes panel stats and re-renders roll plots (no panel re-detection needed).
@@ -114,7 +123,7 @@ The core processing engine. Depends on `window.CFG`.
   - `+1` = East-edge drive
   - `-1` = West-edge drive
   - `0`  = no edge drive, stuck-sensor row, or outside a qualifying drive
-- Direction mapping: North + Right sensor predominates → West (−1); North + Left → East (+1); South + Right → East (+1); South + Left → West (−1).
+- Direction mapping: North + Right sensor predominates → East (+1); North + Left → West (−1); South + Right → West (−1); South + Left → East (+1).
 - Per-segment majority vote (UltrasonicRight vs UltrasonicLeft raw counts > 0.5) determines direction for the whole segment; then a per-row validity pass (via `_stampEdgeSegment`) resets any row in a continuous "stuck" run (sensor = 1 without break for > `CFG.edgeDrive.maxContinuousSecs` seconds) back to 0.
 
 **`_stampEdgeSegment(seg, dominantKey, edgeVal, maxSecs)`** *(module-private helper)*
@@ -123,13 +132,13 @@ The core processing engine. Depends on `window.CFG`.
 **`assignPanelNumbers(rows, seg0, seg180)`**
 - Merges drives in time order. **Requires `_edgeDrive` already set** (call `computeEdgeDrive` first).
 - Skips entire segments where no row has `_edgeDrive ≠ 0` — the panel counter never advances for them.
-- Within each qualifying segment, builds `activeDrive` (rows with `_edgeDrive ≠ 0`) and runs the pitch-gap hysteresis detector **only on those rows**. The panel counter only increments for panels detected in valid rows.
-- Stamps `_panel_no` on matched rows (positive for 0° passes, negative for 180°; `null` for all other rows including stuck-sensor rows inside an otherwise-valid segment).
+- Within each qualifying segment, builds `activeDrive` (rows with `_edgeDrive ≠ 0`) and runs the pitch-gap hysteresis detector **only on those rows**, using raw `_pitchRaw` so bias changes do not affect panel boundaries. The panel counter only increments for panels detected in valid rows.
+- Starts from signed integer `CFG.panels.startPanel`, then increments for 0° drives and decrements for 180° drives. Stamps `_panel_no` on matched rows (`null` for all other rows including stuck-sensor rows inside an otherwise-valid segment).
 
 **`computePanelStats(rows)`**
 - Scans all rows in time order; each contiguous `_panel_no` run is one occurrence.
-- For each run: **centre X**, **dir** (0 or 180 from yaw at centre), **meanPitch**, **meanRoll** (both from rows within ±10 cm of centre, falling back to the whole run), **edgeDrive** (majority vote of `_edgeDrive` across all rows in the run: `+1` East, `−1` West, `0` none).
-- Returns `Array<{ panel_no, dir, centerX, meanPitch, meanRoll, edgeDrive, windowRowCount }>` in time order.
+- For each run: **centre X**, **dir** (0 or 180 from yaw at centre), raw **meanPitch** from `_pitchRaw`, mean **meanRoll** from bias-adjusted `_roll`, displayed **displayedMeanPitch** / **displayedMeanRoll** (with bias/sign applied once), and **edgeDrive** (majority vote of `_edgeDrive` across all rows in the run: `+1` East, `−1` West, `0` none). Also stamps `_panel_mean_pitch` / `_panel_mean_roll` on every row in that panel occurrence for telemetry export.
+- Returns `Array<{ panel_no, dir, centerX, meanPitch, meanRoll, displayedMeanPitch, displayedMeanRoll, edgeDrive, windowRowCount }>` in time order.
 
 **`updateStatsBar(rows)`**
 - Writes row count, total distance, and time span into the stats bar elements.
@@ -138,9 +147,9 @@ The core processing engine. Depends on `window.CFG`.
 
 ### `js/exporter.js`
 
-**`exportCSV(rows, headers)`** — Downloads `telemetry_with_panels.csv` (original columns + `X_m`, `panel_number`, `EdgeDrive`). `panel_number` is empty and `EdgeDrive` is `0` for rows outside qualifying edge drives or in stuck-sensor runs.
+**`exportCSV(rows, headers)`** — Downloads `telemetry_with_panels.csv` (original columns + `X_m`, `panel_number`, `EdgeDrive`, `mean_pitch_deg`, `mean_roll_deg`). `panel_number` and mean angle columns are empty for rows outside qualifying edge drives or in stuck-sensor runs; `EdgeDrive` is `0`.
 
-**`exportPanelStatsCSV(panelStats)`** — Downloads `panel_stats.csv` (one row per occurrence: `panel_number`, `direction_deg`, `center_x_m`, `mean_pitch_deg`, `mean_roll_deg`, `edge_drive`, `window_row_count`).
+**`exportPanelStatsCSV(panelStats)`** — Downloads `panel_stats.csv` (one row per occurrence: `panel_number`, `direction_deg`, `center_x_m`, `mean_pitch_deg`, `mean_roll_deg`, `edge_drive`, `window_row_count`). Exported pitch/roll values use the same displayed direction sign convention as the plots.
 
 No dependencies on `CFG`.
 
@@ -154,9 +163,7 @@ Depends on **Plotly** (CDN). Reads CSS design tokens via `getComputedStyle` for 
 | Helper | Purpose |
 |--------|---------|
 | `_themeColors()` | Returns `{ paper, plot, grid, text, muted, primary }` from CSS variables |
-| `plotPitchDeg(row)` | Displayed pitch: negates for 180° direction (uses `_panel_no` sign, falls back to yaw) |
-| `_displayedMeanPitch(s)` | `s.dir === 180 ? −s.meanPitch : s.meanPitch` — sign flip by **direction**, not edge |
-| `_displayedMeanRoll(s)` | `s.dir === 180 ? −s.meanRoll : s.meanRoll` — sign flip by **direction**, not edge |
+| `plotPitchDeg(row)` | Raw pitch for the hidden legacy distance plot; no direction sign is applied here |
 | `_formatPitchLabel(p)` | Compact numeric string for angle annotations |
 | `_dedupeFirstPassPerPanel(stats, edgeDrive)` | First time-ordered occurrence per `panel_no` for a given `edgeDrive` value (1 or −1) |
 | `_buildTiltChain(stats, edgeDrive, color)` | Connected polyline + annotations for the pitch tilt-lines chart (×10 exaggeration); filters by `edgeDrive` |
@@ -171,8 +178,8 @@ Depends on **Plotly** (CDN). Reads CSS design tokens via `getComputedStyle` for 
 | `renderPanelMeanPitchPlot(panelStats)` | `#plot-panel-pitch` | Scatter: displayed mean pitch vs panel number — two traces: **Edge-East** (blue circle) and **Edge-West** (red diamond). Normal drives (`edgeDrive=0`) excluded. |
 | `renderPanelRollLinesPlot(panelStats)` | `#plot-panel-roll-lines` | Connected roll tilt chain — two traces: **Edge-East** (blue) and **Edge-West** (red); angle × 10, labels |
 | `renderPanelMeanRollPlot(panelStats)` | `#plot-panel-roll` | Scatter: displayed mean roll vs panel number — two traces: **Edge-East** (blue circle) and **Edge-West** (red diamond). Normal drives excluded. |
-| `renderPitchPlot(rows)` | `#plot-pitch` | Hidden. Gray background + per-panel colored traces, Y = `plotPitchDeg`, X = odometry |
-| `renderSideViewPlot(panelStats, axis, sideViewEdge)` | `#plot-side-view` | **Roll only.** First, middle, and last panels from the selected edge group (`sideViewEdge`: 1 = East-edge, −1 = West-edge), sorted by `centerX`. Each panel drawn as a line from `(−0.5, −roll/2)` through `(0, 0)` to `(+0.5, +roll/2)`. Hidden when `axis === 'pitch'` via CSS. |
+| `renderPitchPlot(rows)` | `#plot-pitch` | Hidden. Gray background + per-panel colored traces, Y = raw pitch via `plotPitchDeg`, X = odometry |
+| `renderSideViewPlot(panelStats, axis, sideViewEdge)` | `#plot-side-view` | **Roll only.** First, middle, and last panels from the selected edge group (`sideViewEdge`: 1 = East-edge, −1 = West-edge), sorted by `centerX`. Each panel is drawn with fixed geometry (`x: -1..1`) using an exaggerated angle (`roll*10`): `y = x * tan(roll*10°)`, with a constant Y-axis scale. Hidden when `axis === 'pitch'` via CSS. |
 
 Colors: `PANEL_COLORS` (15-color palette) for per-panel traces; `COLOR_0 = '#3A8FC4'` (blue) for Edge-East / `COLOR_180 = '#D4523A'` (red) for Edge-West; side-view uses amber / blue / green for first / middle / last panels.
 
@@ -182,7 +189,7 @@ Colors: `PANEL_COLORS` (15-color palette) for per-panel traces; `COLOR_0 = '#3A8
 App wiring layer. Loaded last (after all other JS modules). Contains a single async IIFE that:
 - Calls `await loadConfig()` on startup.
 - Queries all DOM elements once and stores them in `const` variables.
-- Defines `handleFile`, `parseBiasInput`, `applyBiasAndRefreshPlots`, `applyRollBiasAndRefreshPlots`, `applyTheme`.
+- Defines `handleFile`, `parseBiasInput`, `parseSignedIntegerInput`, `loadSavedTuningValues`, `saveTuningValue`, `applyStartPanelAndRefreshPlots`, `applyBiasAndRefreshPlots`, `applyRollBiasAndRefreshPlots`, `applyTheme`.
 - Attaches all event listeners: file input, drag/drop, export buttons, bias inputs, theme toggle, resize handle, axis toggle, side-view edge toggle.
 - Maintains module-level state: `loadedRows`, `loadedHeaders`, `loadedPanelStats`, `loadedSeg0`, `loadedSeg180`, `sideViewEdge` (1 = East, −1 = West; default 1).
 
@@ -204,9 +211,10 @@ Single-page application HTML shell. Contains no application logic — all JS liv
 | `#export-panel-btn` | Table icon; downloads panel stats CSV |
 | `#axis-toggle` | Pitch / Roll pill toggle in topnav. Sets `data-axis` on `#plot-area`; CSS hides the inactive pair and the side view wrapper |
 | `#theme-toggle` | Moon/sun icon; switches light/dark; persists in `localStorage` (`pt-theme`) |
-| `#stats-bar` | Hidden until load; summary stats + bias inputs |
-| `#bias-pitch-input` | Number input (step 0.1°); edits `CFG.biasPitch`, triggers `reapplyPitchBias` → full re-detection → all plots |
-| `#bias-roll-input` | Number input (step 0.1°); edits `CFG.biasRoll`, triggers `reapplyRollBias` → panel stats → roll plots only |
+| `#stats-bar` | Hidden until load; summary stats + start-panel and bias inputs |
+| `#start-panel-input` | Signed integer input; edits `CFG.panels.startPanel`, persists to `localStorage` (`pt-start-panel`), then re-runs panel numbering → panel stats → all plots |
+| `#bias-pitch-input` | Number input (step 0.1°); edits `CFG.biasPitch`, persists to `localStorage` (`pt-bias-pitch`), triggers `reapplyPitchBias` → pitch plots only |
+| `#bias-roll-input` | Number input (step 0.1°); edits `CFG.biasRoll`, persists to `localStorage` (`pt-bias-roll`), triggers `reapplyRollBias` → panel stats → roll plots only |
 | `#drop-zone` | Full-page drop target before file load |
 | `#plot-area` | Flex-row container, `data-axis="pitch\|roll"`. Contains `.plot-column` + `#resize-handle` + `.side-view-wrapper` |
 | `.plot-column` | Flex-column; holds the four toggled plot divs + hidden `#plot-pitch` |
@@ -226,6 +234,8 @@ Single-page application HTML shell. Contains no application logic — all JS liv
 
 ```
 await loadConfig()
+→ apply saved user tuning from localStorage:
+    pt-start-panel, pt-bias-pitch, pt-bias-roll override config defaults
 → wire: file input, drag/drop, theme toggle, axis toggle, bias inputs, resize handle,
          side-view East/West edge toggle
 
@@ -236,6 +246,7 @@ await loadConfig()
     computeEdgeDrive(rows, seg0, seg180)   ← must run before assignPanelNumbers
     assignPanelNumbers(rows, seg0, seg180) ← uses _edgeDrive; skips non-edge segments
     computePanelStats(rows)          → loadedPanelStats
+    start-panel input ← CFG.panels.startPanel
     bias inputs ← CFG.biasPitch / CFG.biasRoll
     updateStatsBar(rows)
     renderPanelTiltLinesPlot / renderPanelMeanPitchPlot
@@ -244,10 +255,15 @@ await loadConfig()
     renderPitchPlot(rows)            [hidden, kept for completeness]
     enable export buttons
 
-→ on bias pitch change:
-    CFG.biasPitch ← input; reapplyPitchBias(rows)
+→ on start-panel change:
+    CFG.panels.startPanel ← signed integer input
     assignPanelNumbers; computePanelStats
     render all 4 active plots + side view
+
+→ on bias pitch change:
+    CFG.biasPitch ← input; reapplyPitchBias(rows)
+    displayed pitch values are refreshed on existing panel stats
+    render pitch plots only
 
 → on bias roll change:
     CFG.biasRoll ← input; reapplyRollBias(rows)
@@ -300,8 +316,8 @@ Light/dark via `data-theme="light"|"dark"` on `<html>`.
 - **`window.CFG` is the global config object** — all modules read from it. Never hardcode thresholds.
 - **Odometry only during straight drives** — turns excluded from integration to avoid error accumulation.
 - **Edge drive before panel detection** — `computeEdgeDrive` must run before `assignPanelNumbers`. Panel gaps are detected only in `activeDrive` rows (`_edgeDrive ≠ 0`) so the panel counter never advances for non-edge or stuck-sensor rows.
-- **EdgeDrive uses absolute compass direction** — East/West derived from robot heading (North=0°, South=180°) combined with which ultrasonic sensor fires. Stuck sensor runs (> `CFG.edgeDrive.maxContinuousSecs` continuous) are excluded per-row.
-- **Pitch/roll sign flip by direction, not edge** — `_displayedMeanPitch` and `_displayedMeanRoll` still negate for 180° drives so values are visually consistent regardless of which edge was traversed.
+- **EdgeDrive uses absolute compass direction** — East/West derived from robot heading (North=0°, South=180°) combined with which ultrasonic sensor fires: North+Right and South+Left are East; North+Left and South+Right are West. Stuck sensor runs (> `CFG.edgeDrive.maxContinuousSecs` continuous) are excluded per-row.
+- **Pitch/roll sign flip by direction, not edge** — `computePanelStats` applies the display sign once (`0°` drives are negated) into `displayedMeanPitch` / `displayedMeanRoll`; plots and CSV export reuse those fields. Pitch bias affects only displayed pitch values, not panel detection or raw pitch stats.
 - **Plots split by Edge-East / Edge-West** — all panel plots (scatter and tilt-lines) show two traces by edge direction; normal drives (`edgeDrive=0`) are never plotted.
 - **Roll bias does not trigger panel re-detection** — panel boundaries depend only on pitch; roll bias only affects roll stats and roll plots.
 - **Side view only for roll** — pitch is already well-represented by the tilt-lines chart. Side view shows first, middle, and last panels from the selected edge group (East or West), switchable via the East/West toggle above the chart.

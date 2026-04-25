@@ -266,7 +266,7 @@ body {
   letter-spacing: 0.05em;
 }
 
-/* Bias pitch: same column order as other stat-cards — value on top, label below */
+/* Editable stat inputs: same column order as other cards — value on top, label below */
 .stat-value--bias {
   display: flex;
   align-items: center;

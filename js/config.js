@@ -22,7 +22,7 @@ const CFG_DEFAULTS = {
     gapWidthM: 0.02,
     ticksPerMeter: 1262,
     trimM: 0.04,
-    startPanel: 0
+    startPanel: 45
   },
 
   drives: {
@@ -69,5 +69,11 @@ async function loadConfig() {
   }
   if (typeof CFG.biasRoll !== 'number' || Number.isNaN(CFG.biasRoll)) {
     CFG.biasRoll = CFG_DEFAULTS.biasRoll;
+  }
+  if (!CFG.panels || typeof CFG.panels !== 'object') {
+    CFG.panels = JSON.parse(JSON.stringify(CFG_DEFAULTS.panels));
+  }
+  if (!Number.isSafeInteger(CFG.panels.startPanel)) {
+    CFG.panels.startPanel = CFG_DEFAULTS.panels.startPanel;
   }
 }

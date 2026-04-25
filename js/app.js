@@ -18,8 +18,12 @@
   let loadedSeg0, loadedSeg180;
   let sideViewEdge = 1; // 1 = East, -1 = West
 
-  const biasPitchInput = document.getElementById('bias-pitch-input');
-  const biasRollInput  = document.getElementById('bias-roll-input');
+  const startPanelInput = document.getElementById('start-panel-input');
+  const biasPitchInput  = document.getElementById('bias-pitch-input');
+  const biasRollInput   = document.getElementById('bias-roll-input');
+  const STORAGE_START_PANEL = 'pt-start-panel';
+  const STORAGE_BIAS_PITCH  = 'pt-bias-pitch';
+  const STORAGE_BIAS_ROLL   = 'pt-bias-roll';
 
   // ── File handling ───────────────────────────────────────────────────
   function handleFile(file) {
@@ -46,8 +50,9 @@
       loadedSeg0       = seg0;
       loadedSeg180     = seg180;
 
-      biasPitchInput.value = String(CFG.biasPitch);
-      biasRollInput.value  = String(CFG.biasRoll);
+      startPanelInput.value = String(CFG.panels.startPanel);
+      biasPitchInput.value  = String(CFG.biasPitch);
+      biasRollInput.value   = String(CFG.biasRoll);
 
       // Show UI before rendering so Plotly measures real widths
       dropZone.classList.add('hidden');
@@ -81,7 +86,7 @@
     if (loadedPanelStats) exportPanelStatsCSV(loadedPanelStats);
   });
 
-  // ── Bias pitch (live): replot + re-run panel detection ───────────────
+  // ── Bias pitch (live): update displayed pitch only ───────────────────
   function parseBiasInput(str) {
     const t = String(str).trim().replace(',', '.');
     if (
@@ -97,19 +102,77 @@
     return Number.isFinite(v) ? v : NaN;
   }
 
-  function applyBiasAndRefreshPlots() {
-    if (!loadedRows) return false;
-    const v = parseBiasInput(biasPitchInput.value);
-    if (!Number.isFinite(v)) return false;
-    CFG.biasPitch = v;
-    reapplyPitchBias(loadedRows);
-    assignPanelNumbers(loadedRows, loadedSeg0 || [], loadedSeg180 || []);
-    loadedPanelStats = computePanelStats(loadedRows);
+  function parseSignedIntegerInput(str) {
+    const t = String(str).trim();
+    if (t === '' || t === '-' || t === '+') return NaN;
+    if (!/^[+-]?\d+$/.test(t)) return NaN;
+    const v = Number(t);
+    return Number.isSafeInteger(v) ? v : NaN;
+  }
+
+  function loadSavedTuningValues() {
+    const savedStartPanel = parseSignedIntegerInput(localStorage.getItem(STORAGE_START_PANEL));
+    if (Number.isFinite(savedStartPanel)) CFG.panels.startPanel = savedStartPanel;
+
+    const savedBiasPitch = parseBiasInput(localStorage.getItem(STORAGE_BIAS_PITCH));
+    if (Number.isFinite(savedBiasPitch)) CFG.biasPitch = savedBiasPitch;
+
+    const savedBiasRoll = parseBiasInput(localStorage.getItem(STORAGE_BIAS_ROLL));
+    if (Number.isFinite(savedBiasRoll)) CFG.biasRoll = savedBiasRoll;
+  }
+
+  function saveTuningValue(key, value) {
+    localStorage.setItem(key, String(value));
+  }
+
+  loadSavedTuningValues();
+
+  function renderAllPlots() {
     renderPanelMeanPitchPlot(loadedPanelStats);
     renderPanelTiltLinesPlot(loadedPanelStats);
     renderPanelMeanRollPlot(loadedPanelStats);
     renderPanelRollLinesPlot(loadedPanelStats);
     renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch', sideViewEdge);
+    renderPitchPlot(loadedRows);
+  }
+
+  // ── Start panel (live): re-number panels + replot ────────────────────
+  function applyStartPanelAndRefreshPlots() {
+    if (!loadedRows) return false;
+    const v = parseSignedIntegerInput(startPanelInput.value);
+    if (!Number.isFinite(v)) return false;
+    saveTuningValue(STORAGE_START_PANEL, v);
+    CFG.panels.startPanel = v;
+    assignPanelNumbers(loadedRows, loadedSeg0 || [], loadedSeg180 || []);
+    loadedPanelStats = computePanelStats(loadedRows);
+    renderAllPlots();
+    return true;
+  }
+
+  startPanelInput.addEventListener('input', () => {
+    applyStartPanelAndRefreshPlots();
+  });
+
+  startPanelInput.addEventListener('change', () => {
+    applyStartPanelAndRefreshPlots();
+  });
+
+  startPanelInput.addEventListener('blur', () => {
+    if (!loadedRows) return;
+    if (!applyStartPanelAndRefreshPlots())
+      startPanelInput.value = String(CFG.panels.startPanel);
+  });
+
+  function applyBiasAndRefreshPlots() {
+    if (!loadedRows) return false;
+    const v = parseBiasInput(biasPitchInput.value);
+    if (!Number.isFinite(v)) return false;
+    if (v === CFG.biasPitch) return true;
+    saveTuningValue(STORAGE_BIAS_PITCH, v);
+    CFG.biasPitch = v;
+    reapplyPitchBias(loadedRows, loadedPanelStats);
+    renderPanelMeanPitchPlot(loadedPanelStats);
+    renderPanelTiltLinesPlot(loadedPanelStats);
     renderPitchPlot(loadedRows);
     return true;
   }
@@ -133,6 +196,8 @@
     if (!loadedRows) return false;
     const v = parseBiasInput(biasRollInput.value);
     if (!Number.isFinite(v)) return false;
+    if (v === CFG.biasRoll) return true;
+    saveTuningValue(STORAGE_BIAS_ROLL, v);
     CFG.biasRoll = v;
     reapplyRollBias(loadedRows);
     loadedPanelStats = computePanelStats(loadedRows);
