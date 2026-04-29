@@ -165,6 +165,7 @@ Depends on **Plotly** (CDN). Reads CSS design tokens via `getComputedStyle` for 
 | `_themeColors()` | Returns `{ paper, plot, grid, text, muted, primary }` from CSS variables |
 | `plotPitchDeg(row)` | Raw pitch for the hidden legacy distance plot; no direction sign is applied here |
 | `_formatPitchLabel(p)` | Compact numeric string for angle annotations |
+| `_edgeFilterAllows(edgeFilter, edgeDrive)` | Shared predicate for the main edge visibility filter (`both`, `east`, `west`) |
 | `_dedupeFirstPassPerPanel(stats, edgeDrive)` | First time-ordered occurrence per `panel_no` for a given `edgeDrive` value (1 or −1) |
 | `_buildTiltChain(stats, edgeDrive, color)` | Connected polyline + annotations for the pitch tilt-lines chart (×10 exaggeration); filters by `edgeDrive` |
 | `_buildTiltChainRoll(stats, edgeDrive, color)` | Same for the roll tilt-lines chart (×10 exaggeration); filters by `edgeDrive` |
@@ -174,10 +175,10 @@ Depends on **Plotly** (CDN). Reads CSS design tokens via `getComputedStyle` for 
 
 | Function | Plot div | What it renders |
 |----------|----------|-----------------|
-| `renderPanelTiltLinesPlot(panelStats)` | `#plot-panel-tilt-lines` | Connected pitch tilt chain — two traces: **Edge-East** (blue) and **Edge-West** (red); angle × 10, labels |
-| `renderPanelMeanPitchPlot(panelStats)` | `#plot-panel-pitch` | Scatter: displayed mean pitch vs panel number — two traces: **Edge-East** (blue circle) and **Edge-West** (red diamond). Normal drives (`edgeDrive=0`) excluded. |
-| `renderPanelRollLinesPlot(panelStats)` | `#plot-panel-roll-lines` | Connected roll tilt chain — two traces: **Edge-East** (blue) and **Edge-West** (red); angle × 10, labels |
-| `renderPanelMeanRollPlot(panelStats)` | `#plot-panel-roll` | Scatter: displayed mean roll vs panel number — two traces: **Edge-East** (blue circle) and **Edge-West** (red diamond). Normal drives excluded. |
+| `renderPanelTiltLinesPlot(panelStats, edgeFilter)` | `#plot-panel-tilt-lines` | Connected pitch tilt chain — traces filtered by `edgeFilter` (`both`, `east`, `west`); angle × 10, labels |
+| `renderPanelMeanPitchPlot(panelStats, edgeFilter)` | `#plot-panel-pitch` | Scatter: displayed mean pitch vs panel number — traces filtered by `edgeFilter`. Normal drives (`edgeDrive=0`) excluded. |
+| `renderPanelRollLinesPlot(panelStats, edgeFilter)` | `#plot-panel-roll-lines` | Connected roll tilt chain — traces filtered by `edgeFilter`; angle × 10, labels |
+| `renderPanelMeanRollPlot(panelStats, edgeFilter)` | `#plot-panel-roll` | Scatter: displayed mean roll vs panel number — traces filtered by `edgeFilter`. Normal drives excluded. |
 | `renderPitchPlot(rows)` | `#plot-pitch` | Hidden. Gray background + per-panel colored traces, Y = raw pitch via `plotPitchDeg`, X = odometry |
 | `renderSideViewPlot(panelStats, axis, sideViewEdge)` | `#plot-side-view` | **Roll only.** First, middle, and last panels from the selected edge group (`sideViewEdge`: 1 = East-edge, −1 = West-edge), sorted by `centerX`. Each panel is drawn with fixed geometry (`x: -1..1`) using an exaggerated angle (`roll*10`): `y = x * tan(roll*10°)`, with a constant Y-axis scale. Hidden when `axis === 'pitch'` via CSS. |
 
@@ -210,6 +211,7 @@ Single-page application HTML shell. Contains no application logic — all JS liv
 | `#export-btn` | Save icon; downloads augmented telemetry CSV |
 | `#export-panel-btn` | Table icon; downloads panel stats CSV |
 | `#axis-toggle` | Pitch / Roll pill toggle in topnav. Sets `data-axis` on `#plot-area`; CSS hides the inactive pair and the side view wrapper |
+| `#edge-filter-toggle` | Both / East / West pill toggle in topnav. Filters the four main panel plots by edge trace; choosing East or West also switches the roll side-view edge to match. |
 | `#theme-toggle` | Moon/sun icon; switches light/dark; persists in `localStorage` (`pt-theme`) |
 | `#stats-bar` | Hidden until load; summary stats + start-panel and bias inputs |
 | `#start-panel-input` | Signed integer input; edits `CFG.panels.startPanel`, persists to `localStorage` (`pt-start-panel`), then re-runs panel numbering → panel stats → all plots |
@@ -236,8 +238,8 @@ Single-page application HTML shell. Contains no application logic — all JS liv
 await loadConfig()
 → apply saved user tuning from localStorage:
     pt-start-panel, pt-bias-pitch, pt-bias-roll override config defaults
-→ wire: file input, drag/drop, theme toggle, axis toggle, bias inputs, resize handle,
-         side-view East/West edge toggle
+→ wire: file input, drag/drop, theme toggle, axis toggle, main edge filter,
+         bias inputs, resize handle, side-view East/West edge toggle
 
 → on CSV load:
     parseCSV(text)
@@ -249,8 +251,8 @@ await loadConfig()
     start-panel input ← CFG.panels.startPanel
     bias inputs ← CFG.biasPitch / CFG.biasRoll
     updateStatsBar(rows)
-    renderPanelTiltLinesPlot / renderPanelMeanPitchPlot
-    renderPanelRollLinesPlot / renderPanelMeanRollPlot
+    renderPanelTiltLinesPlot / renderPanelMeanPitchPlot with edgePlotFilter
+    renderPanelRollLinesPlot / renderPanelMeanRollPlot with edgePlotFilter
     renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis, sideViewEdge)
     renderPitchPlot(rows)            [hidden, kept for completeness]
     enable export buttons
@@ -274,6 +276,10 @@ await loadConfig()
     data-axis updated; CSS shows/hides correct plots
     re-render the 2 newly visible plots (Plotly needs real width after display change)
     renderSideViewPlot(loadedPanelStats, newAxis, sideViewEdge)
+
+→ on main edge filter toggle (Both / East / West):
+    edgePlotFilter updated; the four main panel plots are re-rendered with only the
+    selected edge traces. Choosing East or West also updates sideViewEdge to match.
 
 → on side-view edge toggle (East ↔ West):
     sideViewEdge updated (1 or −1)

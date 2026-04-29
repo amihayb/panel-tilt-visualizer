@@ -55,18 +55,25 @@ function _applyPanelNumberXAxis(layout, panelStats) {
   }
 }
 
+function _edgeFilterAllows(edgeFilter, edgeDrive) {
+  if (edgeFilter === 'east') return edgeDrive === 1;
+  if (edgeFilter === 'west') return edgeDrive === -1;
+  return true;
+}
+
 // ─── Mean Pitch vs Panel Number ───────────────────────────────────────────
 // panelStats is a time-ordered list of panel occurrences (one per contiguous
 // run).  The same panel_no can appear multiple times.
 // One trace per direction (0° and 180°), markers only (no connecting line)
 // because the same panel_no can have multiple y values.
 
-function renderPanelMeanPitchPlot(panelStats) {
+function renderPanelMeanPitchPlot(panelStats, edgeFilter = 'both') {
   const c = _themeColors();
   const traces = [];
 
-  const eastEdge = panelStats.filter(s => s.edgeDrive === 1);
-  const westEdge = panelStats.filter(s => s.edgeDrive === -1);
+  const visibleStats = panelStats.filter(s => _edgeFilterAllows(edgeFilter, s.edgeDrive));
+  const eastEdge = visibleStats.filter(s => s.edgeDrive === 1);
+  const westEdge = visibleStats.filter(s => s.edgeDrive === -1);
 
   if (eastEdge.length) {
     traces.push({
@@ -140,7 +147,7 @@ function renderPanelMeanPitchPlot(panelStats) {
     showlegend: true
   };
 
-  _applyPanelNumberXAxis(layout, panelStats);
+  _applyPanelNumberXAxis(layout, visibleStats);
 
   Plotly.react('plot-panel-pitch', traces, layout, _cfg);
 }
@@ -240,11 +247,12 @@ function _buildTiltChain(stats, edgeDrive, color) {
   return { x, y, annotations };
 }
 
-function renderPanelTiltLinesPlot(panelStats) {
+function renderPanelTiltLinesPlot(panelStats, edgeFilter = 'both') {
   const c = _themeColors();
+  const visibleStats = panelStats.filter(s => _edgeFilterAllows(edgeFilter, s.edgeDrive));
 
-  const chainRight = _buildTiltChain(panelStats,  1, COLOR_0);
-  const chainLeft  = _buildTiltChain(panelStats, -1, COLOR_180);
+  const chainRight = _buildTiltChain(visibleStats,  1, COLOR_0);
+  const chainLeft  = _buildTiltChain(visibleStats, -1, COLOR_180);
 
   const traces = [];
 
@@ -312,7 +320,7 @@ function renderPanelTiltLinesPlot(panelStats) {
     showlegend: Boolean(chainRight.x.length || chainLeft.x.length)
   };
 
-  _applyPanelNumberXAxis(layout, panelStats);
+  _applyPanelNumberXAxis(layout, visibleStats);
 
   Plotly.react('plot-panel-tilt-lines', traces, layout, _cfg);
 }
@@ -404,12 +412,13 @@ function renderPitchPlot(rows) {
 
 // ─── Mean Roll vs Panel Number ─────────────────────────────────────────────
 
-function renderPanelMeanRollPlot(panelStats) {
+function renderPanelMeanRollPlot(panelStats, edgeFilter = 'both') {
   const c = _themeColors();
   const traces = [];
 
-  const eastEdge = panelStats.filter(s => s.edgeDrive === 1);
-  const westEdge = panelStats.filter(s => s.edgeDrive === -1);
+  const visibleStats = panelStats.filter(s => _edgeFilterAllows(edgeFilter, s.edgeDrive));
+  const eastEdge = visibleStats.filter(s => s.edgeDrive === 1);
+  const westEdge = visibleStats.filter(s => s.edgeDrive === -1);
 
   if (eastEdge.length) {
     traces.push({
@@ -483,18 +492,19 @@ function renderPanelMeanRollPlot(panelStats) {
     showlegend: true
   };
 
-  _applyPanelNumberXAxis(layout, panelStats);
+  _applyPanelNumberXAxis(layout, visibleStats);
 
   Plotly.react('plot-panel-roll', traces, layout, _cfg);
 }
 
 // ─── Panel roll tilt lines (connected chain per direction) ─────────────────
 
-function renderPanelRollLinesPlot(panelStats) {
+function renderPanelRollLinesPlot(panelStats, edgeFilter = 'both') {
   const c = _themeColors();
+  const visibleStats = panelStats.filter(s => _edgeFilterAllows(edgeFilter, s.edgeDrive));
 
-  const chainRight = _buildTiltChainRoll(panelStats,  1, COLOR_0);
-  const chainLeft  = _buildTiltChainRoll(panelStats, -1, COLOR_180);
+  const chainRight = _buildTiltChainRoll(visibleStats,  1, COLOR_0);
+  const chainLeft  = _buildTiltChainRoll(visibleStats, -1, COLOR_180);
 
   const traces = [];
 
@@ -562,7 +572,7 @@ function renderPanelRollLinesPlot(panelStats) {
     showlegend: Boolean(chainRight.x.length || chainLeft.x.length)
   };
 
-  _applyPanelNumberXAxis(layout, panelStats);
+  _applyPanelNumberXAxis(layout, visibleStats);
 
   Plotly.react('plot-panel-roll-lines', traces, layout, _cfg);
 }

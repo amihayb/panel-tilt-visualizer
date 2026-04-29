@@ -11,11 +11,14 @@
   const themeIcon  = document.getElementById('theme-icon');
   const axisToggle       = document.getElementById('axis-toggle');
   const axisBtns         = axisToggle.querySelectorAll('.axis-btn');
+  const edgeFilterToggle = document.getElementById('edge-filter-toggle');
+  const edgeFilterBtns   = edgeFilterToggle.querySelectorAll('.axis-btn');
   const edgeToggle       = document.getElementById('side-view-edge-toggle');
   const edgeBtns         = edgeToggle.querySelectorAll('.axis-btn');
 
   let loadedRows, loadedHeaders, loadedPanelStats;
   let loadedSeg0, loadedSeg180;
+  let edgePlotFilter = 'both'; // both, east, west
   let sideViewEdge = 1; // 1 = East, -1 = West
 
   const startPanelInput = document.getElementById('start-panel-input');
@@ -60,10 +63,10 @@
       plotArea.classList.remove('hidden');
 
       updateStatsBar(rows);
-      renderPanelMeanPitchPlot(loadedPanelStats);
-      renderPanelTiltLinesPlot(loadedPanelStats);
-      renderPanelMeanRollPlot(loadedPanelStats);
-      renderPanelRollLinesPlot(loadedPanelStats);
+      renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
       renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch', sideViewEdge);
       renderPitchPlot(rows);
 
@@ -128,10 +131,10 @@
   loadSavedTuningValues();
 
   function renderAllPlots() {
-    renderPanelMeanPitchPlot(loadedPanelStats);
-    renderPanelTiltLinesPlot(loadedPanelStats);
-    renderPanelMeanRollPlot(loadedPanelStats);
-    renderPanelRollLinesPlot(loadedPanelStats);
+    renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
+    renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
+    renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
+    renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
     renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch', sideViewEdge);
     renderPitchPlot(loadedRows);
   }
@@ -171,8 +174,8 @@
     saveTuningValue(STORAGE_BIAS_PITCH, v);
     CFG.biasPitch = v;
     reapplyPitchBias(loadedRows, loadedPanelStats);
-    renderPanelMeanPitchPlot(loadedPanelStats);
-    renderPanelTiltLinesPlot(loadedPanelStats);
+    renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
+    renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
     renderPitchPlot(loadedRows);
     return true;
   }
@@ -201,8 +204,8 @@
     CFG.biasRoll = v;
     reapplyRollBias(loadedRows);
     loadedPanelStats = computePanelStats(loadedRows);
-    renderPanelMeanRollPlot(loadedPanelStats);
-    renderPanelRollLinesPlot(loadedPanelStats);
+    renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
+    renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
     renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch', sideViewEdge);
     return true;
   }
@@ -246,10 +249,10 @@
     themeIcon.className = theme === 'dark' ? 'fa fa-moon-o' : 'fa fa-sun-o';
     // Re-render plots so Plotly picks up the new CSS color variables
     if (loadedPanelStats) {
-      renderPanelMeanPitchPlot(loadedPanelStats);
-      renderPanelTiltLinesPlot(loadedPanelStats);
-      renderPanelMeanRollPlot(loadedPanelStats);
-      renderPanelRollLinesPlot(loadedPanelStats);
+      renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
       renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch', sideViewEdge);
     }
     if (loadedRows) renderPitchPlot(loadedRows);
@@ -308,15 +311,34 @@
       // Re-render the newly visible plots so Plotly measures real widths
       if (!loadedPanelStats) return;
       if (axis === 'pitch') {
-        renderPanelTiltLinesPlot(loadedPanelStats);
-        renderPanelMeanPitchPlot(loadedPanelStats);
+        renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
+        renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
       } else {
-        renderPanelRollLinesPlot(loadedPanelStats);
-        renderPanelMeanRollPlot(loadedPanelStats);
+        renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
+        renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
       }
       renderSideViewPlot(loadedPanelStats, axis, sideViewEdge);
       // Let the browser apply CSS layout changes (side-view appearing/hiding)
       // before telling Plotly to resize all charts to their new container widths.
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+    });
+  });
+
+  // ── Main plot East / West edge filter ─────────────────────────────────
+  edgeFilterBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const nextFilter = btn.dataset.edgeFilter || 'both';
+      if (edgePlotFilter === nextFilter) return;
+      edgePlotFilter = nextFilter;
+      edgeFilterBtns.forEach(b => b.classList.toggle('active', b === btn));
+
+      if (nextFilter !== 'both') {
+        sideViewEdge = nextFilter === 'east' ? 1 : -1;
+        edgeBtns.forEach(b => b.classList.toggle('active', b.dataset.edge === nextFilter));
+      }
+
+      if (!loadedPanelStats) return;
+      renderAllPlots();
       setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
     });
   });
