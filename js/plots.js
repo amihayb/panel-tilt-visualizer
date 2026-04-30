@@ -22,6 +22,17 @@ function _themeColors() {
 
 const _cfg = { responsive: true, displayModeBar: true, scrollZoom: true };
 
+// Exponential moving average: y_k = (1-α)·y_{k-1} + α·x_k
+// Returns the original array unchanged when alpha is null/undefined.
+function _emaSmooth(values, alpha) {
+  if (alpha == null || !values.length) return values;
+  const out = [values[0]];
+  for (let k = 1; k < values.length; k++) {
+    out.push((1 - alpha) * out[k - 1] + alpha * values[k]);
+  }
+  return out;
+}
+
 /**
  * Raw pitch for the hidden legacy distance plot.
  * Visible panel plots use `displayedMeanPitch` from `computePanelStats`.
@@ -193,12 +204,14 @@ function _dedupeFirstPassPerPanel(stats, edgeDrive) {
  * Each segment width = 1 unit (panel_no−0.5 … panel_no+0.5).
  * Start y of first segment = 0; subsequent segments inherit the previous end y.
  */
-function _buildTiltChain(stats, edgeDrive, color) {
+function _buildTiltChain(stats, edgeDrive, color, alpha = null) {
   const sorted = _dedupeFirstPassPerPanel(stats, edgeDrive).sort(
     (a, b) => a.centerX - b.centerX
   );
 
   if (!sorted.length) return { x: [], y: [], annotations: [] };
+
+  const smoothed = _emaSmooth(sorted.map(s => s.displayedMeanPitch), alpha);
 
   const x = [];
   const y = [];
@@ -210,7 +223,7 @@ function _buildTiltChain(stats, edgeDrive, color) {
 
   for (let i = 0; i < sorted.length; i++) {
     const s = sorted[i];
-    const displayed = s.displayedMeanPitch;
+    const displayed = smoothed[i]; // smoothed (or original when alpha=null)
     const thetaDeg = Math.max(-89, Math.min(89, displayed * 10));
     const theta = (thetaDeg * Math.PI) / 180;
 
@@ -247,12 +260,12 @@ function _buildTiltChain(stats, edgeDrive, color) {
   return { x, y, annotations };
 }
 
-function renderPanelTiltLinesPlot(panelStats, edgeFilter = 'both') {
+function renderPanelTiltLinesPlot(panelStats, edgeFilter = 'both', alpha = null) {
   const c = _themeColors();
   const visibleStats = panelStats.filter(s => _edgeFilterAllows(edgeFilter, s.edgeDrive));
 
-  const chainRight = _buildTiltChain(visibleStats,  1, COLOR_0);
-  const chainLeft  = _buildTiltChain(visibleStats, -1, COLOR_180);
+  const chainRight = _buildTiltChain(visibleStats,  1, COLOR_0,   alpha);
+  const chainLeft  = _buildTiltChain(visibleStats, -1, COLOR_180, alpha);
 
   const traces = [];
 
@@ -355,7 +368,7 @@ function renderPitchPlot(rows) {
   panelNums.forEach((pn, i) => {
     const panelRows = rows.filter(r => r._panel_no === pn);
     const color = PANEL_COLORS[Math.abs(pn) % PANEL_COLORS.length];
-    const label = pn > 0 ? `Panel ${pn} (0°)` : `Panel ${Math.abs(pn)} (180°)`;
+    const label = `Panel ${pn}`;
 
     traces.push({
       x: panelRows.map(r => r._x),
@@ -499,12 +512,12 @@ function renderPanelMeanRollPlot(panelStats, edgeFilter = 'both') {
 
 // ─── Panel roll tilt lines (connected chain per direction) ─────────────────
 
-function renderPanelRollLinesPlot(panelStats, edgeFilter = 'both') {
+function renderPanelRollLinesPlot(panelStats, edgeFilter = 'both', alpha = null) {
   const c = _themeColors();
   const visibleStats = panelStats.filter(s => _edgeFilterAllows(edgeFilter, s.edgeDrive));
 
-  const chainRight = _buildTiltChainRoll(visibleStats,  1, COLOR_0);
-  const chainLeft  = _buildTiltChainRoll(visibleStats, -1, COLOR_180);
+  const chainRight = _buildTiltChainRoll(visibleStats,  1, COLOR_0,   alpha);
+  const chainLeft  = _buildTiltChainRoll(visibleStats, -1, COLOR_180, alpha);
 
   const traces = [];
 
@@ -682,12 +695,14 @@ function renderSideViewPlot(panelStats, axis, sideViewEdge = 1) {
   Plotly.react('plot-side-view', traces, layout, _cfg);
 }
 
-function _buildTiltChainRoll(stats, edgeDrive, color) {
+function _buildTiltChainRoll(stats, edgeDrive, color, alpha = null) {
   const sorted = _dedupeFirstPassPerPanel(stats, edgeDrive).sort(
     (a, b) => a.centerX - b.centerX
   );
 
   if (!sorted.length) return { x: [], y: [], annotations: [] };
+
+  const smoothed = _emaSmooth(sorted.map(s => s.displayedMeanRoll), alpha);
 
   const x = [];
   const y = [];
@@ -699,7 +714,7 @@ function _buildTiltChainRoll(stats, edgeDrive, color) {
 
   for (let i = 0; i < sorted.length; i++) {
     const s = sorted[i];
-    const displayed = s.displayedMeanRoll;
+    const displayed = smoothed[i]; // smoothed (or original when alpha=null)
     const thetaDeg = Math.max(-89, Math.min(89, displayed * 10));
     const theta = (thetaDeg * Math.PI) / 180;
 

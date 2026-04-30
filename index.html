@@ -103,6 +103,15 @@
       </div>
       <label class="stat-label" for="bias-roll-input">Bias roll (deg)</label>
     </div>
+    <div class="stat-card stat-card--bias">
+      <div class="stat-value stat-value--bias stat-value--smooth">
+        <input type="number" id="smooth-alpha-input" step="0.05" min="0.01" max="0.99"
+          title="EMA smoothing factor α — lower = smoother (0 strongest, 1 = no effect)">
+        <button id="smooth-btn" class="axis-btn"
+          title="Toggle EMA smoothing on tilt-line charts">Smooth</button>
+      </div>
+      <label class="stat-label">α / Smooth</label>
+    </div>
   </div>
 
   <!-- ─── Drop zone (shown before file loaded) ───────────────────────────── -->

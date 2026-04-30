@@ -20,13 +20,17 @@
   let loadedSeg0, loadedSeg180;
   let edgePlotFilter = 'both'; // both, east, west
   let sideViewEdge = 1; // 1 = East, -1 = West
+  let smoothAlpha = 0.5;      // EMA alpha when smoothing is active
+  let tiltSmooth  = null;     // null = smoothing off; float = alpha (smoothing on)
 
   const startPanelInput = document.getElementById('start-panel-input');
   const biasPitchInput  = document.getElementById('bias-pitch-input');
   const biasRollInput   = document.getElementById('bias-roll-input');
-  const STORAGE_START_PANEL = 'pt-start-panel';
-  const STORAGE_BIAS_PITCH  = 'pt-bias-pitch';
-  const STORAGE_BIAS_ROLL   = 'pt-bias-roll';
+  const smoothAlphaInput        = document.getElementById('smooth-alpha-input');
+  const smoothBtn               = document.getElementById('smooth-btn');
+  const STORAGE_START_PANEL     = 'pt-start-panel';
+  const STORAGE_BIAS_PITCH      = 'pt-bias-pitch';
+  const STORAGE_BIAS_ROLL       = 'pt-bias-roll';
 
   // ── File handling ───────────────────────────────────────────────────
   function handleFile(file) {
@@ -53,9 +57,10 @@
       loadedSeg0       = seg0;
       loadedSeg180     = seg180;
 
-      startPanelInput.value = String(CFG.panels.startPanel);
-      biasPitchInput.value  = String(CFG.biasPitch);
-      biasRollInput.value   = String(CFG.biasRoll);
+      startPanelInput.value  = String(CFG.panels.startPanel);
+      biasPitchInput.value   = String(CFG.biasPitch);
+      biasRollInput.value    = String(CFG.biasRoll);
+      smoothAlphaInput.value = String(smoothAlpha);
 
       // Show UI before rendering so Plotly measures real widths
       dropZone.classList.add('hidden');
@@ -64,9 +69,9 @@
 
       updateStatsBar(rows);
       renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
-      renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
       renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
-      renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
       renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch', sideViewEdge);
       renderPitchPlot(rows);
 
@@ -122,6 +127,7 @@
 
     const savedBiasRoll = parseBiasInput(localStorage.getItem(STORAGE_BIAS_ROLL));
     if (Number.isFinite(savedBiasRoll)) CFG.biasRoll = savedBiasRoll;
+
   }
 
   function saveTuningValue(key, value) {
@@ -132,11 +138,10 @@
 
   function renderAllPlots() {
     renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
-    renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
+    renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
     renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
-    renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
+    renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
     renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch', sideViewEdge);
-    renderPitchPlot(loadedRows);
   }
 
   // ── Start panel (live): re-number panels + replot ────────────────────
@@ -175,7 +180,7 @@
     CFG.biasPitch = v;
     reapplyPitchBias(loadedRows, loadedPanelStats);
     renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
-    renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
+    renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
     renderPitchPlot(loadedRows);
     return true;
   }
@@ -205,7 +210,7 @@
     reapplyRollBias(loadedRows);
     loadedPanelStats = computePanelStats(loadedRows);
     renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
-    renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
+    renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
     renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch', sideViewEdge);
     return true;
   }
@@ -222,6 +227,33 @@
     if (!loadedRows) return;
     if (!applyRollBiasAndRefreshPlots())
       biasRollInput.value = String(CFG.biasRoll);
+  });
+
+  // ── Tilt-line smoothing (toggle button + alpha input) ────────────────
+  function renderTiltLinesOnly() {
+    renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
+    renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
+  }
+
+  smoothBtn.addEventListener('click', () => {
+    if (!loadedPanelStats) return;
+    const turningOn = tiltSmooth === null;
+    tiltSmooth = turningOn ? smoothAlpha : null;
+    smoothBtn.classList.toggle('active', turningOn);
+    renderTiltLinesOnly();
+  });
+
+  smoothAlphaInput.addEventListener('input', () => {
+    const v = parseBiasInput(smoothAlphaInput.value);
+    if (!Number.isFinite(v) || v <= 0 || v >= 1) return;
+    smoothAlpha = v;
+    if (tiltSmooth !== null) { tiltSmooth = v; renderTiltLinesOnly(); }
+  });
+
+  smoothAlphaInput.addEventListener('blur', () => {
+    const v = parseBiasInput(smoothAlphaInput.value);
+    if (!Number.isFinite(v) || v <= 0 || v >= 1)
+      smoothAlphaInput.value = String(smoothAlpha);
   });
 
   // ── Click on drop zone opens file picker ────────────────────────────
@@ -250,12 +282,11 @@
     // Re-render plots so Plotly picks up the new CSS color variables
     if (loadedPanelStats) {
       renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
-      renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
       renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
-      renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
+      renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
       renderSideViewPlot(loadedPanelStats, plotArea.dataset.axis || 'pitch', sideViewEdge);
     }
-    if (loadedRows) renderPitchPlot(loadedRows);
   }
 
   themeBtn.addEventListener('click', () => {
@@ -311,10 +342,10 @@
       // Re-render the newly visible plots so Plotly measures real widths
       if (!loadedPanelStats) return;
       if (axis === 'pitch') {
-        renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter);
+        renderPanelTiltLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
         renderPanelMeanPitchPlot(loadedPanelStats, edgePlotFilter);
       } else {
-        renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter);
+        renderPanelRollLinesPlot(loadedPanelStats, edgePlotFilter, tiltSmooth);
         renderPanelMeanRollPlot(loadedPanelStats, edgePlotFilter);
       }
       renderSideViewPlot(loadedPanelStats, axis, sideViewEdge);
